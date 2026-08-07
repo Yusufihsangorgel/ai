@@ -89,6 +89,11 @@
   streams, the legacy session routes, or an HTTP client; those land as
   separate changes.
 - Add instructions to read the schema when tool arguments fail validation.
+- `MCPServer.elicit` now throws an `RpcException` with
+  `McpErrorCodes.missingRequiredClientCapability` instead of a `StateError`
+  when the client did not declare the `elicitation` capability, so a tool
+  which elicits reaches the client as that error rather than as a successful
+  result whose text is a Dart stack trace.
 
 ## 0.5.2
 
