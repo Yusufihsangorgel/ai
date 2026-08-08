@@ -92,6 +92,11 @@
   streams, the legacy session routes, or an HTTP client; those land as
   separate changes.
 - Add instructions to read the schema when tool arguments fail validation.
+- `ResourcesSupport.readResource` now answers a URI it has no resource or
+  template for with the `-32602` (invalid params) error the 2026-07-28
+  revision requires, carrying the URI as `data.uri`, instead of letting an
+  `ArgumentError` reach the client as a generic `-32000` server error with a
+  Dart stack trace attached.
 
 ## 0.5.2
 

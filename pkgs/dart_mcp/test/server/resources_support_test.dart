@@ -6,6 +6,9 @@ import 'dart:async';
 
 import 'package:async/async.dart';
 import 'package:dart_mcp/server.dart';
+import 'package:dart_mcp/src/utils/constants.dart';
+import 'package:json_rpc_2/error_code.dart' as error_code;
+import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:test/test.dart';
 
 import '../test_utils.dart';
@@ -230,6 +233,30 @@ void main() {
       );
     },
   );
+
+  test('reading an unknown resource reports invalid params', () async {
+    final environment = TestEnvironment(
+      TestMCPClient(),
+      TestMCPServerWithResources.new,
+    );
+    await environment.initializeServer();
+
+    await expectLater(
+      environment.serverConnection.readResource(
+        ReadResourceRequest(uri: 'file:///nonexistent.txt'),
+      ),
+      throwsA(
+        isA<RpcException>()
+            .having((e) => e.code, 'code', error_code.INVALID_PARAMS)
+            .having((e) => e.message, 'message', 'Resource not found')
+            .having(
+              (e) => (e.data as Map)[Keys.uri],
+              'data.uri',
+              'file:///nonexistent.txt',
+            ),
+      ),
+    );
+  });
 }
 
 final class TestMCPServerWithResources extends TestMCPServer
