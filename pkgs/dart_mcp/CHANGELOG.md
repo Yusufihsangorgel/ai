@@ -117,8 +117,19 @@
   has no name for and the client is the one choosing between them. Its factory
   takes `ttlMs` and `cacheScope` on the same terms as the other five cacheable
   results, so the sixth operation the caching rules name is no longer the one
-  which cannot carry the hints. This adds the types only; the server does not
-  answer `server/discover` yet.
+  which cannot carry the hints.
+- Serve `server/discover` from `MCPServer.discover`, which answers with the
+  request-scoped protocol versions this package implements, the
+  `ServerCapabilities` that `MCPServer.initialize` registered, and the
+  instructions the server was given. The dispatcher
+  stamps the identity, result type, and caching hints the schema also requires
+  on it, as it does for every other result, so `server/discover` joins the set
+  of requests whose results carry `ttlMs` and `cacheScope`. Only a server
+  initialized for 2026-07-28 or later registers the handler: answering the
+  request is how a server declares it speaks the request-scoped protocol, and a
+  client probing a legacy server needs the method not found error to know it
+  should fall back to the `initialize` handshake, see
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio#backward-compatibility.
 - Add `package:dart_mcp/streamable_http.dart` with
   `handleStreamableHttpRequest`, the server side of the Streamable HTTP
   transport from the 2026-07-28 revision, see
