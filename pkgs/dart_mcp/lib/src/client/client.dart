@@ -327,6 +327,8 @@ base class ServerConnection extends MCPBase {
   /// server offers, or on its own to present the server to a user. Earlier
   /// servers do not implement the method. They typically answer with a
   /// method-not-found error, but the exact failure is implementation-defined.
+  /// Some do not answer at all. This call does not time out, so a probe
+  /// against one of those stays pending.
   ///
   /// That revision requires every request to name its protocol version and
   /// client capabilities in `_meta`. This method writes [protocolVersion] and

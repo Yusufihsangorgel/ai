@@ -122,6 +122,54 @@ void main() {
         Keys.version: '0.1.0',
       });
     });
+
+    test('client keeps the negotiated session state', () async {
+      final harness = _WireHarness();
+      // A 2025-11-25 server, so the handshake settles on a version, a
+      // capability and an identity the discover response then contradicts.
+      harness.respondToNextRequest({
+        Keys.protocolVersion: ProtocolVersion.v2025_11_25.versionString,
+        Keys.capabilities: {Keys.tools: <String, Object?>{}},
+        Keys.serverInfo: {
+          Keys.name: 'negotiated server',
+          Keys.version: '1.0.0',
+        },
+      });
+      await harness.connection.initialize(
+        InitializeRequest(
+          protocolVersion: ProtocolVersion.v2025_11_25,
+          capabilities: ClientCapabilities(),
+          clientInfo: Implementation(name: 'test client', version: '0.1.0'),
+        ),
+      );
+
+      harness.respondToNextRequest({
+        Keys.resultType: ResultTypes.complete,
+        Keys.supportedVersions: ['2026-07-28'],
+        Keys.capabilities: {Keys.prompts: <String, Object?>{}},
+        Keys.meta: {
+          Keys.serverInfoMeta: {
+            Keys.name: 'discovered server',
+            Keys.version: '2.0.0',
+          },
+        },
+      });
+      final result = await harness.connection.discover(
+        protocolVersion: ProtocolVersion.v2026_07_28,
+        capabilities: ClientCapabilities(),
+      );
+
+      // The result carries what the server just said.
+      expect(result.supportedVersions, ['2026-07-28']);
+      expect(result.capabilities.prompts, isNotNull);
+      expect(result.serverInfo?.name, 'discovered server');
+
+      // The connection still carries what the handshake settled on.
+      expect(harness.connection.protocolVersion, ProtocolVersion.v2025_11_25);
+      expect(harness.connection.serverCapabilities.tools, isNotNull);
+      expect(harness.connection.serverCapabilities.prompts, isNull);
+      expect(harness.connection.serverInfo?.name, 'negotiated server');
+    });
   });
 }
 
