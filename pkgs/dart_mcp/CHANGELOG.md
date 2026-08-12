@@ -124,7 +124,7 @@
   revision is malformed unless its `_meta` names the protocol version and
   client capabilities, so the method takes both, plus an optional
   `clientInfo`, and stamps the reserved metadata keys itself, see
-  https://modelcontextprotocol.io/specification/2026-07-28/basic#meta.
+  https://modelcontextprotocol.io/specification/2026-07-28/basic#_meta.
   `DiscoverResult` gains a `serverInfo` getter for the identity stamp the
   server records under `io.modelcontextprotocol/serverInfo`. The call leaves
   the version and capabilities negotiated by `initialize` untouched, and

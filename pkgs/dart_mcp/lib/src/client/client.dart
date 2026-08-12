@@ -327,14 +327,15 @@ base class ServerConnection extends MCPBase {
   /// prior handshake, so it can be sent before [initialize] to learn which
   /// versions the server supports, or on its own to present the server to a
   /// user. Servers on earlier versions do not implement the method and
-  /// answer with a method-not-found error.
+  /// typically answer with a method-not-found error, but the exact failure is
+  /// implementation-defined.
   ///
   /// That revision requires every request to name its protocol version and
   /// client capabilities in `_meta`, so this method writes [protocolVersion],
   /// [capabilities], and, if given, [clientInfo] under their reserved
   /// metadata keys. Other keys in [meta], such as a progress token, are
-  /// passed through unchanged, and the reserved keys are always the ones
-  /// written here.
+  /// passed through unchanged, and the keys this method writes always take
+  /// precedence over the passthrough.
   ///
   /// This method only sends the request: it does not update this
   /// connection's [ServerConnection.protocolVersion], [serverCapabilities],

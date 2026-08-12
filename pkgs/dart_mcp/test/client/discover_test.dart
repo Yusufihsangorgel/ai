@@ -112,7 +112,7 @@ void main() {
 
 /// A client whose peer is this test: requests surface in [requests] and are
 /// answered with whatever [respondToNextRequest] queued, exercising the wire
-/// format rather than this package's server implementation.
+/// format instead of this package's server implementation.
 class _WireHarness {
   final incoming = StreamController<Map<String, Object?>>();
   final outgoing = StreamController<Map<String, Object?>>();
