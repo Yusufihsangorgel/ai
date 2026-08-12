@@ -574,8 +574,10 @@ const _mcpNameParams = {
 /// that the server not expect a header. This package rejects one sent
 /// anyway, following the Python SDK, and answers it with the same
 /// `HeaderMismatch`. A header sent more than once is rejected before any
-/// comparison: repeated field lines combine into one comma separated value
-/// (RFC 9110 section 5.3), which cannot mirror a single argument. A
+/// comparison: the combined value of a repeated field is the comma separated
+/// list of its field line values (RFC 9110 section 5.2), not the single value
+/// an argument mirrors. Only separate field lines are counted, not the commas
+/// [_singleTokenHeader] rejects, because a mirrored value may hold one. A
 /// `=?base64?...?=` sentinel which does not hold valid base64 is rejected the
 /// same way. Integer values are compared numerically, so a `42` in a header
 /// matches a `42.0` in a body.
