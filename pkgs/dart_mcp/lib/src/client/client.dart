@@ -13,6 +13,7 @@ import 'package:stream_channel/stream_channel.dart';
 import '../../stdio.dart';
 import '../api/api.dart';
 import '../shared.dart';
+import '../utils/constants.dart';
 
 part 'elicitation_support.dart';
 part 'roots_support.dart';
@@ -317,6 +318,45 @@ base class ServerConnection extends MCPBase {
       protocolVersion = serverVersion;
     }
     return response;
+  }
+
+  /// Asks the server to advertise its supported protocol versions,
+  /// capabilities, and identity.
+  ///
+  /// Servers on protocol version 2026-07-28 or later answer this without any
+  /// prior handshake, so it can be sent before [initialize] to learn which
+  /// versions the server supports, or on its own to present the server to a
+  /// user. Servers on earlier versions do not implement the method and
+  /// answer with a method-not-found error.
+  ///
+  /// That revision requires every request to name its protocol version and
+  /// client capabilities in `_meta`, so this method writes [protocolVersion],
+  /// [capabilities], and, if given, [clientInfo] under their reserved
+  /// metadata keys. Other keys in [meta], such as a progress token, are
+  /// passed through unchanged, and the reserved keys are always the ones
+  /// written here.
+  ///
+  /// This method only sends the request: it does not update this
+  /// connection's [ServerConnection.protocolVersion], [serverCapabilities],
+  /// or [serverInfo], which describe the session negotiated by [initialize].
+  Future<DiscoverResult> discover({
+    required ProtocolVersion protocolVersion,
+    required ClientCapabilities capabilities,
+    Implementation? clientInfo,
+    MetaWithProgressToken? meta,
+  }) {
+    final callerMeta = meta as Map<String, Object?>?;
+    return sendRequest(
+      DiscoverRequest.methodName,
+      DiscoverRequest(
+        meta: MetaWithProgressToken.fromMap({
+          ...?callerMeta,
+          Keys.protocolVersionMeta: protocolVersion.versionString,
+          if (clientInfo != null) Keys.clientInfoMeta: clientInfo,
+          Keys.clientCapabilitiesMeta: capabilities,
+        }),
+      ),
+    );
   }
 
   /// List all the tools from this server.

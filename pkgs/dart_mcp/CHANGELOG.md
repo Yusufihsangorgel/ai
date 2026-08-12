@@ -119,6 +119,16 @@
   results, so the sixth operation the caching rules name is no longer the one
   which cannot carry the hints. This adds the types only; the server does not
   answer `server/discover` yet.
+- Add `ServerConnection.discover`, which sends the `server/discover` request
+  and returns the typed `DiscoverResult`. A request on the 2026-07-28
+  revision is malformed unless its `_meta` names the protocol version and
+  client capabilities, so the method takes both, plus an optional
+  `clientInfo`, and stamps the reserved metadata keys itself, see
+  https://modelcontextprotocol.io/specification/2026-07-28/basic#meta.
+  `DiscoverResult` gains a `serverInfo` getter for the identity stamp the
+  server records under `io.modelcontextprotocol/serverInfo`. The call leaves
+  the version and capabilities negotiated by `initialize` untouched, and
+  choosing a version from `supportedVersions` stays with the caller.
 - Add `package:dart_mcp/streamable_http.dart` with
   `handleStreamableHttpRequest`, the server side of the Streamable HTTP
   transport from the 2026-07-28 revision, see
