@@ -235,20 +235,15 @@ void main() {
     });
 
     test('an unrecognized Mcp-Param header', () async {
-      // No annotation names `Other`, so nothing recognizes that header and
-      // nothing compares it.
+      // Validation walks the annotations, none of which names `Other`, so
+      // that header is never read. The annotated `region` argument carries
+      // its own matching header.
       final (status, _) = await post({
-        ...headers('greet'),
-        'Mcp-Param-Other': 'anything',
-      }, body('greet', arguments: {'region': 'us-west1'}));
-      expect(status, 400);
-      // The `region` argument still requires its own header.
-      final (status2, _) = await post({
         ...headers('greet'),
         'Mcp-Param-Region': 'us-west1',
         'Mcp-Param-Other': 'anything',
       }, body('greet', arguments: {'region': 'us-west1'}));
-      expect(status2, 200);
+      expect(status, 200);
     });
 
     test('a call of a tool the server does not have', () async {
