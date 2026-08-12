@@ -217,8 +217,8 @@ void main() {
 
     test('anything on a tool whose annotations are invalid', () async {
       // Two annotations differing only in case are not case-insensitively
-      // unique, which invalidates the whole tool definition: a conforming
-      // client drops the tool and mirrors nothing, so nothing is checked.
+      // unique, which invalidates the whole tool definition, and an invalid
+      // definition gets no header checks at all.
       final (status, _) = await post({
         ...headers('invalid'),
         'Mcp-Param-Region': 'mismatched',
