@@ -74,10 +74,13 @@ import 'src/utils/json_rpc_2_object.dart';
 ///
 /// `Mcp-Session-Id` and `Last-Event-ID` headers are ignored, and no session
 /// id is ever minted: sessions and resumable streams were removed in this
-/// revision. The `Mcp-Param-{Name}` headers this revision defines are not
-/// supported either: nothing here opts into `x-mcp-header`, so no such
-/// header is ever recognized, and it is ignored along with every other
-/// header this handler does not read.
+/// revision. The `Mcp-Param-{Name}` headers this revision defines are
+/// validated on a `tools/call` against the `x-mcp-header` annotations of the
+/// called tool, read off the registry a server with `ToolsSupport` keeps, as
+/// the specification requires of a server which processes the body. A header
+/// which does not mirror an annotated parameter of the called tool is
+/// unrecognized, and is ignored along with every other header this handler
+/// does not read.
 ///
 /// Notifications the server produces while handling the request are passed
 /// to [onNotification]; a JSON response body cannot carry them, so without a
@@ -420,6 +423,8 @@ Future<void> handleStreamableHttpRequest(
       ),
       serverFactory,
       onNotification: onNotification,
+      preDispatch:
+          (server) => _checkMcpParamHeaders(request, method, params, server),
     );
   } catch (_) {
     // The server could not be built for this request. Answer before the error
@@ -557,3 +562,251 @@ const _mcpNameParams = {
   GetPromptRequest.methodName: Keys.name,
   ReadResourceRequest.methodName: Keys.uri,
 };
+
+/// Validates the `Mcp-Param-{Name}` headers of [request] against the
+/// `x-mcp-header` annotations of the tool a `tools/call` [params] names on
+/// [server], returning the `HeaderMismatch` to answer with, or `null` when
+/// the request passes.
+///
+/// Per the specification's server behavior table, an annotated parameter the
+/// body `arguments` carries a value for requires a header which decodes to
+/// that value, and one whose value is absent or `null` forbids it: a header
+/// naming a value the body never carried is exactly the disagreement between
+/// components this validation exists to catch. A `=?base64?...?=` sentinel
+/// which does not hold valid base64 is rejected the same way. Integer values
+/// are compared numerically, so a `42` in a header matches a `42.0` in a
+/// body.
+///
+/// Nothing is checked on the requests which cannot carry annotations: a
+/// method other than `tools/call`, a server without [ToolsSupport] (no
+/// registry to read schemas from), or a tool name the server does not have,
+/// whose answer belongs to the dispatched server. A tool whose annotations
+/// violate the constraints the specification puts on them is skipped whole:
+/// a conforming client rejects such a tool at `tools/list` and mirrors
+/// nothing for it, so there is no promised agreement left to check.
+Future<RpcException?> _checkMcpParamHeaders(
+  HttpRequest request,
+  String method,
+  Map<String, Object?> params,
+  MCPServer server,
+) async {
+  if (method != CallToolRequest.methodName || server is! ToolsSupport) {
+    return null;
+  }
+  final name = params[Keys.name];
+  if (name is! String) return null;
+  Tool? tool;
+  for (final candidate in (await server.listTools()).tools) {
+    if (candidate.name == name) {
+      tool = candidate;
+      break;
+    }
+  }
+  if (tool == null) return null;
+  final inputSchema = (tool as Map<String, Object?>)[Keys.inputSchema];
+  if (inputSchema is! Map<String, Object?>) return null;
+  final declarations = _xMcpHeaderDeclarations(inputSchema);
+  if (declarations == null) return null;
+  final arguments = params[Keys.arguments];
+  final argumentsMap =
+      arguments is Map<String, Object?> ? arguments : const <String, Object?>{};
+  for (final declaration in declarations) {
+    final headerName = '$_mcpParamHeaderPrefix${declaration.header}';
+    final headerValues = request.headers[headerName];
+    if (headerValues != null && headerValues.length > 1) {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'The $headerName header must not be sent more than once',
+      );
+    }
+    final headerValue = headerValues?.single;
+    final bodyValue = _valueAtPath(argumentsMap, declaration.path);
+    // The string a conforming client mirrors into the header, or `null` when
+    // the body carries nothing to mirror: an absent or `null` value, or one
+    // of a shape the encoding rules have no rendering for, which a
+    // conforming client also omits.
+    final expected = switch (bodyValue) {
+      null => null,
+      final String value => value,
+      final bool value => value ? 'true' : 'false',
+      final num value => '$value',
+      _ => null,
+    };
+    if (expected == null) {
+      if (headerValue == null) continue;
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'The $headerName header names a value the body arguments do not '
+        'carry',
+      );
+    }
+    if (headerValue == null) {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'A $headerName header is required when the body carries the '
+        '`${declaration.path.join('.')}` argument',
+      );
+    }
+    final String decoded;
+    try {
+      decoded = _decodeSentinel(headerValue);
+    } on FormatException {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'The $headerName header is not valid base64',
+      );
+    }
+    final matches =
+        declaration.type == 'integer' &&
+                bodyValue is num &&
+                _canonicalDecimal.hasMatch(decoded)
+            ? num.parse(decoded) == bodyValue
+            : decoded == expected;
+    if (!matches) {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'The $headerName header does not match the '
+        '`${declaration.path.join('.')}` argument',
+      );
+    }
+  }
+  return null;
+}
+
+/// The value at the chain of [path] keys in [arguments], or `null` when a
+/// step is missing or not an object.
+///
+/// Header extraction is defined as reading the instance value at the exact
+/// property path of the annotated property, so an explicit `null` and an
+/// absent value read the same here, which is also how the specification
+/// treats them: no value, no header.
+Object? _valueAtPath(Map<String, Object?> arguments, List<String> path) {
+  Object? node = arguments;
+  for (final key in path) {
+    if (node is! Map<String, Object?>) return null;
+    node = node[key];
+  }
+  return node;
+}
+
+/// One `x-mcp-header` annotation of a tool input schema: the chain of
+/// `properties` keys leading to the annotated parameter, the `{Name}` part
+/// of its header, and its declared type.
+typedef _XMcpHeaderDeclaration =
+    ({List<String> path, String header, String type});
+
+/// Collects the `x-mcp-header` annotations of the tool input [schema], or
+/// `null` when any annotation anywhere in it violates the constraints the
+/// specification puts on them.
+///
+/// An annotation must sit on a string, integer, or boolean typed property
+/// reachable from the schema root through `properties` keys alone, must be a
+/// nonempty RFC 9110 token, and must be case-insensitively unique within its
+/// schema. One violation anywhere makes the whole tool definition invalid,
+/// so `null` means: validate nothing. A conforming client drops the tool at
+/// `tools/list` and mirrors no headers for it, and enforcing the valid
+/// subset here would manufacture checks against a promise no client made.
+List<_XMcpHeaderDeclaration>? _xMcpHeaderDeclarations(
+  Map<String, Object?> schema,
+) {
+  final declarations = <_XMcpHeaderDeclaration>[];
+  final seen = <String>{};
+  // Whether every annotation under [node] is valid. [reachable] tracks the
+  // specification's static reachability: true only while every step from the
+  // schema root was a `properties` key.
+  bool visit(Object? node, List<String> path, {required bool reachable}) {
+    if (node is! Map<String, Object?>) return true;
+    if (node.containsKey(_xMcpHeaderKey)) {
+      final header = node[_xMcpHeaderKey];
+      final type = node[Keys.type];
+      if (!reachable ||
+          path.isEmpty ||
+          header is! String ||
+          !_httpToken.hasMatch(header) ||
+          (type != JsonType.string.typeName &&
+              type != JsonType.int.typeName &&
+              type != JsonType.bool.typeName) ||
+          !seen.add(header.toLowerCase())) {
+        return false;
+      }
+      declarations.add((path: path, header: header, type: type as String));
+    }
+    final properties = node[Keys.properties];
+    if (properties is Map<String, Object?>) {
+      for (final MapEntry(:key, :value) in properties.entries) {
+        if (!visit(value, [...path, key], reachable: reachable)) return false;
+      }
+    }
+    for (final keyword in _subschemaKeywords) {
+      final subschema = node[keyword];
+      if (subschema == null) continue;
+      final branches =
+          subschema is List
+              ? subschema
+              : subschema is Map<String, Object?> &&
+                  _mapValuedSubschemaKeywords.contains(keyword)
+              ? subschema.values
+              : [subschema];
+      for (final branch in branches) {
+        if (!visit(branch, [...path, keyword], reachable: false)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  return visit(schema, const [], reachable: true) ? declarations : null;
+}
+
+/// The JSON Schema keywords which hold subschemas the reachability chain
+/// must not pass through. They are walked anyway, with reachability off, so
+/// an annotation under one of them is found and invalidates its tool.
+const _subschemaKeywords = {
+  'items',
+  'prefixItems',
+  'contains',
+  'additionalProperties',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'propertyNames',
+  'patternProperties',
+  'dependentSchemas',
+  'oneOf',
+  'anyOf',
+  'allOf',
+  'not',
+  'if',
+  'then',
+  'else',
+  r'$defs',
+  'definitions',
+};
+
+/// The keywords in [_subschemaKeywords] whose value maps names to
+/// subschemas, so the walk descends into the values rather than reading the
+/// map as one schema.
+const _mapValuedSubschemaKeywords = {
+  'patternProperties',
+  'dependentSchemas',
+  r'$defs',
+  'definitions',
+};
+
+/// RFC 9110 `token` syntax: one or more `tchar` characters, which excludes
+/// the empty string, controls (CR and LF among them), space, and the HTTP
+/// delimiters.
+final _httpToken = RegExp(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$");
+
+/// A decimal number in canonical form, the only shape the value encoding
+/// rules produce for an integer, and the gate in front of the numeric
+/// comparison so `num.parse` never sees the whitespace, hexadecimal, and
+/// exponent forms it accepts and HTTP clients do not send.
+final _canonicalDecimal = RegExp(r'^-?\d+(\.\d+)?$');
+
+/// The prefix of the headers which mirror annotated tool parameters.
+const _mcpParamHeaderPrefix = 'Mcp-Param-';
+
+/// The schema extension property which designates a tool parameter as
+/// mirrored into an HTTP header.
+const _xMcpHeaderKey = 'x-mcp-header';

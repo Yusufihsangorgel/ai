@@ -74,6 +74,16 @@ typedef MCPServerFactory =
 /// request-scoped is the transport's job. Errors thrown by [serverFactory] or
 /// by [MCPServer.initialize] propagate to the caller; a server that was
 /// created is shut down first.
+///
+/// [preDispatch] runs between [MCPServer.initialize] and the delivery of
+/// [message], the first point where what the server registered can be
+/// checked against the message a transport decoded, which is how the
+/// Streamable HTTP transport validates `Mcp-Param-{Name}` headers against
+/// the called tool's schema. Returning an [RpcException] vetoes the
+/// exchange: the exception is serialized against [message] and returned as
+/// the response without the message reaching the server, or dropped the way
+/// every response to a notification is. Errors it throws propagate to the
+/// caller the way [MCPServer.initialize] errors do.
 // TODO: Support server-to-client requests once a transport can route them.
 // https://github.com/dart-lang/ai/issues/162
 Future<Map<String, Object?>?> handleRequestScopedMessage(
@@ -81,6 +91,7 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   MCPServerInitialization initialization,
   MCPServerFactory serverFactory, {
   void Function(Map<String, Object?> notification)? onNotification,
+  FutureOr<RpcException?> Function(MCPServer server)? preDispatch,
 }) async {
   final object = JsonRpc2Object.fromMap(message);
   if (object.kind == JsonRpc2Kind.response) {
@@ -194,6 +205,12 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   try {
     await server.initialize(initialization);
     server.handleInitialized();
+    if (preDispatch != null) {
+      final veto = await preDispatch(server);
+      if (veto != null) {
+        return isRequest ? veto.serialize(message) : null;
+      }
+    }
     inbound.add(message);
     if (isRequest) return await response.future;
     return null;
