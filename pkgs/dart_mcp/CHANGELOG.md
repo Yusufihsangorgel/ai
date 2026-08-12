@@ -127,8 +127,9 @@
   https://modelcontextprotocol.io/specification/2026-07-28/basic#_meta.
   `DiscoverResult` gains a `serverInfo` getter for the identity stamp the
   server records under `io.modelcontextprotocol/serverInfo`. The call leaves
-  the version and capabilities negotiated by `initialize` untouched, and
-  choosing a version from `supportedVersions` stays with the caller.
+  the version, capabilities and `serverInfo` that `initialize` negotiated
+  untouched, and choosing a version from `supportedVersions` stays with the
+  caller.
 - Add `package:dart_mcp/streamable_http.dart` with
   `handleStreamableHttpRequest`, the server side of the Streamable HTTP
   transport from the 2026-07-28 revision, see
