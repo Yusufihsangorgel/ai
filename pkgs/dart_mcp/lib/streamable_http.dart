@@ -570,12 +570,15 @@ const _mcpNameParams = {
 ///
 /// Per the specification's server behavior table, an annotated parameter the
 /// body `arguments` carries a value for requires a header which decodes to
-/// that value, and one whose value is absent or `null` forbids it: a header
-/// naming a value the body never carried is exactly the disagreement between
-/// components this validation exists to catch. A `=?base64?...?=` sentinel
-/// which does not hold valid base64 is rejected the same way. Integer values
-/// are compared numerically, so a `42` in a header matches a `42.0` in a
-/// body.
+/// that value. For a value which is absent or `null` the table only requires
+/// that the server not expect a header. This package rejects one sent
+/// anyway, following the Python SDK, and answers it with the same
+/// `HeaderMismatch`. A header sent more than once is rejected before any
+/// comparison: repeated field lines combine into one comma separated value
+/// (RFC 9110 section 5.3), which cannot mirror a single argument. A
+/// `=?base64?...?=` sentinel which does not hold valid base64 is rejected the
+/// same way. Integer values are compared numerically, so a `42` in a header
+/// matches a `42.0` in a body.
 ///
 /// Nothing is checked on the requests which cannot carry annotations: a
 /// method other than `tools/call`, a server without [ToolsSupport] (no
