@@ -789,7 +789,7 @@ const _subschemaKeywords = {
 };
 
 /// The keywords in [_subschemaKeywords] whose value maps names to
-/// subschemas, so the walk descends into the values rather than reading the
+/// subschemas, so the walk descends into the values instead of reading the
 /// map as one schema.
 const _mapValuedSubschemaKeywords = {
   'patternProperties',
