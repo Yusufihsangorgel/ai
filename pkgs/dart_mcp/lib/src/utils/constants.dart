@@ -18,7 +18,6 @@ extension ResultTypes on Never {
 
 /// Constants for all keys used in the MCP API.
 extension Keys on Never {
-  static const accept = 'accept';
   static const action = 'action';
   static const additionalProperties = 'additionalProperties';
   static const allOf = 'allOf';
@@ -29,7 +28,6 @@ extension Keys on Never {
   static const audience = 'audience';
   static const blob = 'blob';
   static const cacheScope = 'cacheScope';
-  static const cancel = 'cancel';
   static const capabilities = 'capabilities';
   static const clientCapabilitiesMeta =
       'io.modelcontextprotocol/clientCapabilities';
@@ -52,7 +50,6 @@ extension Keys on Never {
   static const details = 'details';
   static const elicitation = 'elicitation';
   static const elicitationId = 'elicitationId';
-  static const embeddedResource = 'embeddedResource';
   static const enum_ = 'enum';
   static const error = 'error';
   static const exclusiveMaximum = 'exclusiveMaximum';
