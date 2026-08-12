@@ -144,9 +144,9 @@
   `handleStreamableHttpRequest`, see
   https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#custom-headers-from-tool-parameters.
   A header must decode to the body argument it mirrors, a malformed
-  `=?base64?...?=` payload is rejected, and a header may neither name an
-  argument the body does not carry nor be missing when the body carries one.
-  Each of those answers `400` with `-32020` (`HeaderMismatch`). The
+  `=?base64?...?=` payload is rejected, and a header may neither point at an
+  absent argument nor go missing while the body carries one. Each of those
+  answers `400` with `-32020` (`HeaderMismatch`). The
   annotations are read off the registry `ToolsSupport` keeps through the new
   `preDispatch` hook on `handleRequestScopedMessage`, which runs between
   server initialization and message delivery and can veto the exchange with

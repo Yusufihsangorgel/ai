@@ -563,7 +563,7 @@ const _mcpNameParams = {
   ReadResourceRequest.methodName: Keys.uri,
 };
 
-/// Validates the `Mcp-Param-{Name}` headers of [request] against the
+/// Checks each `Mcp-Param-{Name}` header [request] carries against the
 /// `x-mcp-header` annotations of the tool a `tools/call` [params] names on
 /// [server], returning the `HeaderMismatch` to answer with, or `null` when
 /// the request passes.

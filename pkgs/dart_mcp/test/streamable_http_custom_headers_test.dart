@@ -235,8 +235,8 @@ void main() {
     });
 
     test('an unrecognized Mcp-Param header', () async {
-      // No annotation names `Other`, so the header is not recognized and is
-      // ignored like any other header this handler does not read.
+      // No annotation names `Other`, so nothing recognizes that header and
+      // nothing compares it.
       final (status, _) = await post({
         ...headers('greet'),
         'Mcp-Param-Other': 'anything',
