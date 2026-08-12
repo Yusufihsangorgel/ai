@@ -184,9 +184,9 @@ extension type DiscoverResult.fromMap(Map<String, Object?> _value)
   /// The name and version of the server software, read from the reserved
   /// `io.modelcontextprotocol/serverInfo` metadata key.
   ///
-  /// Servers should stamp this on their results, but it is self-reported
-  /// and meant for display, logging, and debugging. `null` when the server
-  /// did not identify itself.
+  /// Servers should stamp this on their results, but it is self-reported and
+  /// meant for display and logging. `null` when the server did not identify
+  /// itself.
   Implementation? get serverInfo =>
       meta?[Keys.serverInfoMeta] as Implementation?;
 }

@@ -81,7 +81,7 @@ void main() {
       expect(result.serverInfo, isNull);
     });
 
-    test('passes caller metadata through and owns the reserved keys', () async {
+    test('keeps caller metadata and overwrites the keys it writes', () async {
       final harness = _WireHarness();
       harness.respondToNextRequest({
         Keys.resultType: ResultTypes.complete,
@@ -91,12 +91,20 @@ void main() {
 
       await harness.connection.discover(
         protocolVersion: ProtocolVersion.v2026_07_28,
-        capabilities: ClientCapabilities(),
+        capabilities: ClientCapabilities(
+          elicitation: ElicitationCapability(form: {}),
+        ),
+        clientInfo: Implementation(name: 'test client', version: '0.1.0'),
         meta: MetaWithProgressToken.fromMap({
           Keys.progressToken: 'token-1',
           'example.com/custom': 'kept',
-          // A caller cannot weaken the envelope through the passthrough.
+          // The three reserved keys, set to values the method must replace.
           Keys.protocolVersionMeta: '1900-01-01',
+          Keys.clientCapabilitiesMeta: {Keys.sampling: <String, Object?>{}},
+          Keys.clientInfoMeta: {
+            Keys.name: 'spoofed client',
+            Keys.version: '9.9.9',
+          },
         }),
       );
 
@@ -106,6 +114,13 @@ void main() {
       expect(meta[Keys.progressToken], 'token-1');
       expect(meta['example.com/custom'], 'kept');
       expect(meta[Keys.protocolVersionMeta], '2026-07-28');
+      expect(meta[Keys.clientCapabilitiesMeta], {
+        Keys.elicitation: {Keys.form: <String, Object?>{}},
+      });
+      expect(meta[Keys.clientInfoMeta], {
+        Keys.name: 'test client',
+        Keys.version: '0.1.0',
+      });
     });
   });
 }

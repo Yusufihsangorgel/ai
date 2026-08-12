@@ -320,26 +320,23 @@ base class ServerConnection extends MCPBase {
     return response;
   }
 
-  /// Asks the server to advertise its supported protocol versions,
-  /// capabilities, and identity.
+  /// Asks the server which protocol versions and capabilities it supports.
   ///
-  /// Servers on protocol version 2026-07-28 or later answer this without any
-  /// prior handshake, so it can be sent before [initialize] to learn which
-  /// versions the server supports, or on its own to present the server to a
-  /// user. Servers on earlier versions do not implement the method and
-  /// typically answer with a method-not-found error, but the exact failure is
-  /// implementation-defined.
+  /// Servers on protocol version 2026-07-28 or later answer this without a
+  /// prior handshake. Call it before [initialize] to learn which versions a
+  /// server offers, or on its own to present the server to a user. Earlier
+  /// servers do not implement the method. They typically answer with a
+  /// method-not-found error, but the exact failure is implementation-defined.
   ///
   /// That revision requires every request to name its protocol version and
-  /// client capabilities in `_meta`, so this method writes [protocolVersion],
-  /// [capabilities], and, if given, [clientInfo] under their reserved
-  /// metadata keys. Other keys in [meta], such as a progress token, are
-  /// passed through unchanged, and the keys this method writes always take
-  /// precedence over the passthrough.
+  /// client capabilities in `_meta`. This method writes [protocolVersion] and
+  /// [capabilities] there, plus [clientInfo] when it is given. Any other key
+  /// in [meta], a progress token for instance, is passed through unchanged.
+  /// The keys this method writes always win over the passthrough.
   ///
-  /// This method only sends the request: it does not update this
-  /// connection's [ServerConnection.protocolVersion], [serverCapabilities],
-  /// or [serverInfo], which describe the session negotiated by [initialize].
+  /// The request does not update this connection's
+  /// [ServerConnection.protocolVersion], [serverCapabilities], or
+  /// [serverInfo]. Those describe the session [initialize] negotiated.
   Future<DiscoverResult> discover({
     required ProtocolVersion protocolVersion,
     required ClientCapabilities capabilities,
