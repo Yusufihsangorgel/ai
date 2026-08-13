@@ -320,15 +320,15 @@ base class ServerConnection extends MCPBase {
     return response;
   }
 
-  /// Asks the server which protocol versions and capabilities it supports.
+  /// Asks the server which protocol versions and capabilities it supports, see
+  /// [DiscoverRequest].
   ///
-  /// Servers on protocol version 2026-07-28 or later answer this without a
-  /// prior handshake. Call it before [initialize] to learn which versions a
-  /// server offers, or on its own to present the server to a user. Earlier
-  /// servers do not implement the method. They typically answer with a
-  /// method-not-found error, but the exact failure is implementation-defined.
-  /// Some do not answer at all. This call does not time out, so a probe
-  /// against one of those stays pending.
+  /// It needs no handshake, so it can run before [initialize]. A server that
+  /// does not implement the method usually answers with a method-not-found
+  /// error. Some stdio servers instead exit on any request that reaches them
+  /// before `initialize`, and nothing here times out, so the returned future
+  /// waits until the connection closes. I would probe on a connection I can
+  /// throw away when the server might predate the revision.
   ///
   /// That revision requires every request to name its protocol version and
   /// client capabilities in `_meta`. This method writes [protocolVersion] and
