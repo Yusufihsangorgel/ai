@@ -327,8 +327,8 @@ base class ServerConnection extends MCPBase {
   /// does not implement the method usually answers with a method-not-found
   /// error. Some stdio servers instead exit on any request that reaches them
   /// before `initialize`, and nothing here times out, so the returned future
-  /// waits until the connection closes. I would probe on a connection I can
-  /// throw away when the server might predate the revision.
+  /// waits until the connection closes. You should probe on a connection you
+  /// can discard when the server might predate the revision.
   ///
   /// That revision requires every request to name its protocol version and
   /// client capabilities in `_meta`. This method writes [protocolVersion] and
