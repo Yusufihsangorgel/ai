@@ -166,13 +166,15 @@ void main() {
         ),
       );
       // Answer like a non-Dart server which attaches something other than an
-      // elicitation request as the error data.
+      // elicitation request as the error data. The code is written out rather
+      // than read off the constant, since a server this one stands in for
+      // reads it off the 2025-11-25 revision and not off this package.
       serverController.stream.listen((request) {
         clientController.add({
           Keys.jsonrpc: '2.0',
           Keys.id: request[Keys.id],
           Keys.error: {
-            Keys.code: McpErrorCodes.urlElicitationRequired,
+            Keys.code: -32042,
             Keys.message: 'Url required',
             Keys.data: 'not a map',
           },
