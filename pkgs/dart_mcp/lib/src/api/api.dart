@@ -644,6 +644,7 @@ extension type ResourceLink.fromMap(Map<String, Object?> _value)
     String? description,
     required String uri,
     String? mimeType,
+    int? size,
     Annotations? annotations,
     Meta? meta,
   }) => ResourceLink.fromMap({
@@ -652,6 +653,7 @@ extension type ResourceLink.fromMap(Map<String, Object?> _value)
     if (description != null) Keys.description: description,
     Keys.uri: uri,
     if (mimeType != null) Keys.mimeType: mimeType,
+    if (size != null) Keys.size: size,
     Keys.type: expectedType,
     if (annotations != null) Keys.annotations: annotations,
     if (meta != null) Keys.meta: meta,

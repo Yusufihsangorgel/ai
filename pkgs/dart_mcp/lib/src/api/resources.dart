@@ -220,6 +220,7 @@ extension type Resource.fromMap(Map<String, Object?> _value)
   factory Resource({
     required String uri,
     required String name,
+    String? title,
     Annotations? annotations,
     String? description,
     String? mimeType,
@@ -229,6 +230,7 @@ extension type Resource.fromMap(Map<String, Object?> _value)
   }) => Resource.fromMap({
     Keys.uri: uri,
     Keys.name: name,
+    if (title != null) Keys.title: title,
     if (annotations != null) Keys.annotations: annotations,
     if (description != null) Keys.description: description,
     if (mimeType != null) Keys.mimeType: mimeType,
