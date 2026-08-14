@@ -13,6 +13,7 @@ import 'package:stream_channel/stream_channel.dart';
 import '../../stdio.dart';
 import '../api/api.dart';
 import '../shared.dart';
+import '../utils/constants.dart';
 
 part 'elicitation_support.dart';
 part 'roots_support.dart';
@@ -317,6 +318,45 @@ base class ServerConnection extends MCPBase {
       protocolVersion = serverVersion;
     }
     return response;
+  }
+
+  /// Asks the server which protocol versions and capabilities it supports, see
+  /// [DiscoverRequest].
+  ///
+  /// It needs no handshake, so it can run before [initialize]. A server that
+  /// does not implement the method usually answers with a method-not-found
+  /// error. Some stdio servers instead exit on any request that reaches them
+  /// before `initialize`, and nothing here times out, so the returned future
+  /// waits until the connection closes. You should probe on a connection you
+  /// can discard when the server might predate the revision.
+  ///
+  /// This method writes the protocol version and client capabilities the
+  /// revision asks a `server/discover` request to name in `_meta`, from
+  /// [protocolVersion] and [capabilities], plus [clientInfo] when it is given.
+  /// Any other key in [meta], a progress token for instance, is passed through
+  /// unchanged. The keys this method writes always win over the passthrough.
+  ///
+  /// The request does not update this connection's
+  /// [ServerConnection.protocolVersion], [serverCapabilities], or
+  /// [serverInfo]. Those describe the session [initialize] negotiated.
+  Future<DiscoverResult> discover({
+    required ProtocolVersion protocolVersion,
+    required ClientCapabilities capabilities,
+    Implementation? clientInfo,
+    MetaWithProgressToken? meta,
+  }) {
+    final callerMeta = meta as Map<String, Object?>?;
+    return sendRequest(
+      DiscoverRequest.methodName,
+      DiscoverRequest(
+        meta: MetaWithProgressToken.fromMap({
+          ...?callerMeta,
+          Keys.protocolVersionMeta: protocolVersion.versionString,
+          if (clientInfo != null) Keys.clientInfoMeta: clientInfo,
+          Keys.clientCapabilitiesMeta: capabilities,
+        }),
+      ),
+    );
   }
 
   /// List all the tools from this server.

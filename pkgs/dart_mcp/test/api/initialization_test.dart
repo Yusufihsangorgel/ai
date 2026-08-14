@@ -110,6 +110,55 @@ void main() {
       expect(result.instructions, 'Prefer `get_weather` for forecast lookups.');
     });
 
+    test('the result reads serverInfo off the reserved metadata key', () {
+      final result = DiscoverResult.fromMap(
+        jsonDecode('''
+{
+  "supportedVersions": ["2026-07-28"],
+  "capabilities": {},
+  "_meta": {
+    "io.modelcontextprotocol/serverInfo": {
+      "name": "example server",
+      "version": "1.2.3"
+    }
+  }
+}
+''')
+            as Map<String, Object?>,
+      );
+
+      expect(result.serverInfo?.name, 'example server');
+      expect(result.serverInfo?.version, '1.2.3');
+    });
+
+    test('the result reports a missing serverInfo stamp as null', () {
+      final result = DiscoverResult.fromMap({
+        'supportedVersions': ['2026-07-28'],
+        'capabilities': ServerCapabilities(),
+      });
+
+      expect(result.serverInfo, isNull);
+    });
+
+    test('the result reports a serverInfo stamp which is not an object as '
+        'null', () {
+      // The schema says this key is self-reported and unverified, so a server
+      // sending the wrong shape should not take the whole result down with it.
+      for (final stamp in [
+        'acme-server/1.0',
+        <Object?>['acme', 1],
+        7,
+      ]) {
+        final result = DiscoverResult.fromMap({
+          'supportedVersions': ['2026-07-28'],
+          'capabilities': ServerCapabilities(),
+          '_meta': {'io.modelcontextprotocol/serverInfo': stamp},
+        });
+
+        expect(result.serverInfo, isNull, reason: 'stamp was $stamp');
+      }
+    });
+
     test('the result reports a version this package does not know', () {
       // The point of reading these as strings: dropping the versions
       // `ProtocolVersion` has no name for would hide them from the client

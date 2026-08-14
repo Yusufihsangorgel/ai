@@ -180,6 +180,17 @@ extension type DiscoverResult.fromMap(Map<String, Object?> _value)
   /// effectively, and should not duplicate information already in tool
   /// descriptions.
   String? get instructions => _value[Keys.instructions] as String?;
+
+  /// The name and version of the server software, read from the reserved
+  /// `io.modelcontextprotocol/serverInfo` metadata key.
+  ///
+  /// The schema calls this self-reported and unverified, and tells a client not
+  /// to change its behavior on it, so a value which is not an object reads as
+  /// `null` here the same way an absent one does.
+  Implementation? get serverInfo {
+    final stamp = meta?[Keys.serverInfoMeta];
+    return stamp is Map<String, Object?> ? stamp as Implementation : null;
+  }
 }
 
 /// Capabilities a client may support.
