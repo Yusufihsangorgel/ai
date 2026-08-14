@@ -111,6 +111,14 @@
   and `.unsupportedProtocolVersion`. The same registry reserves `-32042`, so
   `urlElicitationRequired` now documents that only the 2025-11-25 revision
   emits it.
+- Add `InputRequiredResult` and `InputRequest`, modeling the result a server
+  answers `tools/call`, `prompts/get`, and `resources/read` with when it needs
+  input before it can finish, see
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr.
+  `resultType` reads `input_required` on one, and the client fulfills what it
+  asks for before retrying, quoting `requestState` back. That exchange is what
+  the 2026-07-28 revision uses instead of the server-initiated requests earlier
+  revisions had. Neither side of it is implemented yet.
 - Add `SubscriptionFilter`, `SubscriptionsListenRequest`,
   `SubscriptionsListenResult`, and `SubscriptionsAcknowledgedNotification`,
   modeling the `subscriptions/listen` request the 2026-07-28 revision adds, see
