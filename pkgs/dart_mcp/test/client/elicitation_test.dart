@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:dart_mcp/client.dart';
 import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/src/utils/constants.dart';
+import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:test/test.dart';
@@ -189,6 +190,99 @@ void main() {
                 McpErrorCodes.urlElicitationRequired,
               )
               .having((e) => e.data, 'data', 'not a map'),
+        ),
+      );
+    });
+  });
+
+  group('an elicitation mode this client turned down', () {
+    // `elicit` stops these on the server side. They go out through
+    // `sendRequest` so they reach the client guard, which is what catches a
+    // server that does not check before it sends.
+    test('answers a form request with invalid params', () async {
+      final environment = TestEnvironment(
+        TestMCPClientWithElicitationUrlSupport(
+          elicitationHandler:
+              (request, connection) =>
+                  fail('the client should not be asked to handle a form'),
+        ),
+        TestMCPServer.new,
+      );
+      final server = environment.server;
+      await environment.initializeServer();
+
+      await expectLater(
+        server.sendRequest<ElicitResult>(
+          ElicitRequest.methodName,
+          ElicitRequest.form(
+            message: 'What is your name?',
+            requestedSchema: ObjectSchema(),
+          ),
+        ),
+        throwsA(
+          isA<RpcException>()
+              .having((e) => e.code, 'code', error_code.INVALID_PARAMS)
+              .having(
+                (e) => e.message,
+                'message',
+                contains('elicitation.form'),
+              ),
+        ),
+      );
+    });
+
+    test('answers a mode it has no value for with invalid params', () async {
+      final environment = TestEnvironment(
+        TestMCPClientWithElicitationFormSupport(
+          elicitationHandler:
+              (request, connection) => fail(
+                'the client should not be asked to handle an unknown mode',
+              ),
+        ),
+        TestMCPServer.new,
+      );
+      final server = environment.server;
+      await environment.initializeServer();
+
+      await expectLater(
+        server.sendRequest<ElicitResult>(
+          ElicitRequest.methodName,
+          <String, Object?>{Keys.mode: 'voice', Keys.message: 'pick one'}
+              as ElicitRequest,
+        ),
+        throwsA(
+          isA<RpcException>()
+              .having((e) => e.code, 'code', error_code.INVALID_PARAMS)
+              .having((e) => e.message, 'message', contains('voice')),
+        ),
+      );
+    });
+
+    test('answers a url request with invalid params', () async {
+      final environment = TestEnvironment(
+        TestMCPClientWithElicitationFormSupport(
+          elicitationHandler:
+              (request, connection) =>
+                  fail('the client should not be asked to handle a url'),
+        ),
+        TestMCPServer.new,
+      );
+      final server = environment.server;
+      await environment.initializeServer();
+
+      await expectLater(
+        server.sendRequest<ElicitResult>(
+          ElicitRequest.methodName,
+          ElicitRequest.url(
+            message: 'Grant access',
+            url: 'https://example.com',
+            elicitationId: '1',
+          ),
+        ),
+        throwsA(
+          isA<RpcException>()
+              .having((e) => e.code, 'code', error_code.INVALID_PARAMS)
+              .having((e) => e.message, 'message', contains('elicitation.url')),
         ),
       );
     });

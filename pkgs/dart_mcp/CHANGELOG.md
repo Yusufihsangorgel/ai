@@ -39,6 +39,13 @@
     rather than as a `CallToolResult` whose text is a Dart stack trace. A
     server catching the `StateError` needs to catch `RpcException` instead,
     which comes from `package:json_rpc_2`.
+  - `ElicitationRequestSupport.elicit` now checks which mode a request names. A
+    server that guarded on `supportsElicitation` should read
+    `supportsFormElicitation` or `supportsUrlElicitation`.
+  - `supportsFormElicitation` counts a client that named neither mode as taking
+    form requests, which is what `elicitation` meant before the modes split.
+  - `ServerConnection` now answers an elicitation mode the client did not
+    declare with invalid params, where it used to answer a `decline`.
   - `ResourcesSupport.readResource` now answers a URI it has no resource or
     template for with the `-32602` (invalid params) error the 2026-07-28
     revision requires, carrying the URI as `data.uri`, instead of letting an
