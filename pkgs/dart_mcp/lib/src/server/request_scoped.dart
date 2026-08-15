@@ -82,8 +82,9 @@ typedef MCPServerFactory =
 /// the called tool's schema. Returning an [RpcException] vetoes the
 /// exchange: the exception is serialized against [message] and returned as
 /// the response without the message reaching the server, or dropped the way
-/// every response to a notification is. Errors it throws propagate to the
-/// caller the way [MCPServer.initialize] errors do.
+/// every response to a notification is. Returning it keeps the code on the
+/// response, where a transport reads it to pick a status. Errors it throws
+/// propagate to the caller the way [MCPServer.initialize] errors do.
 // TODO: Support server-to-client requests once a transport can route them.
 // https://github.com/dart-lang/ai/issues/162
 Future<Map<String, Object?>?> handleRequestScopedMessage(
