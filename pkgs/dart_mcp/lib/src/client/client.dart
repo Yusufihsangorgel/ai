@@ -13,6 +13,7 @@ import 'package:stream_channel/stream_channel.dart';
 import '../../stdio.dart';
 import '../api/api.dart';
 import '../shared.dart';
+import '../utils/constants.dart';
 
 part 'elicitation_support.dart';
 part 'roots_support.dart';
@@ -229,20 +230,26 @@ base class ServerConnection extends MCPBase {
 
     if (elicitationFormSupport != null || elicitationUrlSupport != null) {
       registerRequestHandler(ElicitRequest.methodName, (ElicitRequest request) {
-        switch (request.mode) {
-          case ElicitationMode.form:
-            if (elicitationFormSupport != null) {
-              return elicitationFormSupport.handleElicitation(request, this);
-            } else {
-              return ElicitResult(action: ElicitationAction.decline);
-            }
-          case ElicitationMode.url:
-            if (elicitationUrlSupport != null) {
-              return elicitationUrlSupport.handleElicitation(request, this);
-            } else {
-              return ElicitResult(action: ElicitationAction.decline);
-            }
+        // Read the raw value: `ElicitRequest.mode` throws when the sender
+        // named something outside this version's enum.
+        final mode = (request as Map<String, Object?>)[Keys.mode];
+        if (mode == null || mode == ElicitationMode.form.name) {
+          if (elicitationFormSupport == null) {
+            throw RpcException.invalidParams(
+              'This client did not declare the elicitation.form capability',
+            );
+          }
+          return elicitationFormSupport.handleElicitation(request, this);
         }
+        if (mode == ElicitationMode.url.name) {
+          if (elicitationUrlSupport == null) {
+            throw RpcException.invalidParams(
+              'This client did not declare the elicitation.url capability',
+            );
+          }
+          return elicitationUrlSupport.handleElicitation(request, this);
+        }
+        throw RpcException.invalidParams('Unsupported elicitation mode $mode');
       });
     }
 
