@@ -64,6 +64,12 @@
     revisions fill it in only when the server set none. `LoggingSupport` also
     stops registering `logging/setLevel` on that revision, which is what a
     transport dispatching on its own gets.
+- Fix the `Meta` dartdoc, which still described the pre-2025-11-25 prefix
+  format (`modelcontextprotocol.io/`) instead of the reverse-DNS format the
+  spec has used since then (`io.modelcontextprotocol/`), see
+  https://modelcontextprotocol.io/specification/2025-11-25/basic/index#_meta.
+  Also document the `traceparent`, `tracestate`, and `baggage` keys the
+  2026-07-28 revision reserves for OpenTelemetry trace context.
 - Add `handleRequestScopedMessage` and `MCPServerFactory`, which serve each
   decoded JSON-RPC message on a fresh server instance for request-scoped
   transports. On 2026-07-28, successful results record the server
@@ -173,12 +179,6 @@
   Streamable HTTP handler already requires; the server map travels with
   `ServerCapabilities`, which is held by the legacy `initialize` result and
   by `DiscoverResult`.
-- Fix the `Meta` dartdoc, which still described the pre-2025-11-25 prefix
-  format (`modelcontextprotocol.io/`) instead of the reverse-DNS format the
-  spec has used since then (`io.modelcontextprotocol/`), see
-  https://modelcontextprotocol.io/specification/2025-11-25/basic/index#_meta.
-  Also document the `traceparent`, `tracestate`, and `baggage` keys the
-  2026-07-28 revision reserves for OpenTelemetry trace context.
 
 ## 0.5.2
 
