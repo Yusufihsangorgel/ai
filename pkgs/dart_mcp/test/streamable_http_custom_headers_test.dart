@@ -234,6 +234,48 @@ void main() {
       expect(status, 200);
     });
 
+    test('anything on a tool whose annotation name is not an HTTP '
+        'token', () async {
+      // The header name contains a space, which RFC 9110 token syntax
+      // forbids, so this is the same whole-tool invalidation as the
+      // case-duplicate and composition-keyword tools above, just for the
+      // token-syntax constraint instead. A conforming client rejects the
+      // tool at `tools/list` and mirrors no header for it, so the argument
+      // reaches the tool unchecked.
+      final (status, _) = await post(
+        headers('malformed-token'),
+        body('malformed-token', arguments: {'value': 'anything'}),
+      );
+      expect(status, 200);
+    });
+
+    test('anything on a tool whose annotation sits on a number-typed '
+        'property', () async {
+      // `number` is not one of the three types the specification allows
+      // `x-mcp-header` on, so this is the same whole-tool invalidation as
+      // above, for the type constraint.
+      final (status, _) = await post(
+        headers('number-typed'),
+        body('number-typed', arguments: {'ratio': 0.5}),
+      );
+      expect(status, 200);
+    });
+
+    test('anything on a tool annotated at the schema root', () async {
+      // A root annotation invalidates the tool, so `Mcp-Param-Whole` is
+      // unrecognized here, the same as `Mcp-Param-Other` in the
+      // unrecognized-header test below. Sending it, rather than omitting
+      // it, is what distinguishes an invalidated tool from a wrongly
+      // accepted one: the value at an empty path is the whole arguments
+      // map, never a string, so a wrongly accepted root declaration would
+      // still see no value to mirror and reject a header that names one.
+      final (status, _) = await post({
+        ...headers('root-annotated'),
+        'Mcp-Param-Whole': 'anything',
+      }, body('root-annotated', arguments: {}));
+      expect(status, 200);
+    });
+
     test('an unrecognized Mcp-Param header', () async {
       // Validation walks the annotations, none of which names `Other`, so
       // that header is never read. The annotated `region` argument carries
@@ -334,6 +376,18 @@ void main() {
         ...headers('count'),
         'Mcp-Param-Count': '4e1',
       }, body('count', arguments: {'count': 40}));
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+    });
+
+    test('a canonically formatted integer that disagrees with the body '
+        'value', () async {
+      // Both sides parse cleanly as numbers, so this only fails if the
+      // comparison actually checks the values and not just their shape.
+      final (status, text) = await post({
+        ...headers('count'),
+        'Mcp-Param-Count': '41',
+      }, body('count', arguments: {'count': 42}));
       expect(status, 400);
       expect(errorCode(text), McpErrorCodes.headerMismatch);
     });
@@ -500,6 +554,59 @@ base class _AnnotatedToolServer extends MCPServer with ToolsSupport {
         }),
       ),
       (_) => CallToolResult(content: [TextContent(text: 'composed')]),
+    );
+    registerTool(
+      Tool(
+        name: 'malformed-token',
+        inputSchema: ObjectSchema.fromMap({
+          Keys.type: JsonType.object.typeName,
+          Keys.properties: {
+            'value': {
+              Keys.type: JsonType.string.typeName,
+              // A space is not an RFC 9110 tchar, so this is not a valid
+              // header-name token.
+              'x-mcp-header': 'Bad Header',
+            },
+          },
+        }),
+      ),
+      (_) => CallToolResult(content: [TextContent(text: 'malformed-token')]),
+    );
+    registerTool(
+      Tool(
+        name: 'number-typed',
+        inputSchema: ObjectSchema.fromMap({
+          Keys.type: JsonType.object.typeName,
+          Keys.properties: {
+            // The specification permits `x-mcp-header` only on `string`,
+            // `integer`, and `boolean` properties; `number` is explicitly
+            // excluded.
+            'ratio': {
+              Keys.type: JsonType.num.typeName,
+              'x-mcp-header': 'Ratio',
+            },
+          },
+        }),
+      ),
+      (_) => CallToolResult(content: [TextContent(text: 'number-typed')]),
+    );
+    registerTool(
+      Tool(
+        name: 'root-annotated',
+        // `ObjectSchema.fromMap` wraps whatever map it is given without
+        // checking that its `type` is `object`, so this schema's root
+        // carries a primitive `type` on purpose: an annotation there would
+        // pass the type constraint, isolating the reachability constraint
+        // this tool exists to probe. An annotation on the schema root
+        // itself is not reached through any chain of `properties` keys —
+        // there is no path to mirror — so it must be as unreachable as one
+        // under a `oneOf` branch.
+        inputSchema: ObjectSchema.fromMap({
+          Keys.type: JsonType.string.typeName,
+          'x-mcp-header': 'Whole',
+        }),
+      ),
+      (_) => CallToolResult(content: [TextContent(text: 'root-annotated')]),
     );
   }
 }
