@@ -49,9 +49,9 @@ base mixin AnalyticsEvents
   }
 
   @override
-  Future<GetPromptResult> getPrompt(GetPromptRequest request) async {
+  Future<Result> getPrompt(GetPromptRequest request) async {
     final watch = Stopwatch()..start();
-    GetPromptResult? result;
+    Result? result;
     try {
       return result = await super.getPrompt(request);
     } finally {
@@ -64,7 +64,7 @@ base mixin AnalyticsEvents
           type: AnalyticsEvent.getPrompt.name,
           additionalData: GetPromptMetrics(
             name: request.name,
-            success: result != null && result.messages.isNotEmpty,
+            success: result is GetPromptResult && result.messages.isNotEmpty,
             elapsedMilliseconds: watch.elapsedMilliseconds,
             withArguments: request.arguments?.isNotEmpty == true,
           ),
