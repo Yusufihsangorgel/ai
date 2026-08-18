@@ -328,9 +328,17 @@ base class ServerConnection extends MCPBase {
   /// `handleStreamableHttpRequest` in `package:dart_mcp/streamable_http.dart`
   /// requires of every request on that revision, so this method writes
   /// [protocolVersion] and [capabilities] there, plus [clientInfo] when it is
-  /// given. Any other key in [meta], a progress token for instance, is passed
-  /// through unchanged; the keys this method writes always win over the
-  /// passthrough.
+  /// given.
+  ///
+  /// A caller's own key in [meta] passes through unchanged, a progress
+  /// token for instance. `protocolVersion` and `clientCapabilities` are
+  /// different: the spec's per-request `_meta` table marks both required,
+  /// and a request missing or wrong on a required field is malformed. The
+  /// server rejects a malformed request with `-32602`, so this method's
+  /// [protocolVersion] and [capabilities] arguments always win over
+  /// whatever a caller also carries in [meta] under those two keys, and
+  /// [clientInfo] is written the same way so it cannot disagree with the
+  /// identity this call actually sent.
   ///
   /// A server on an earlier revision does not implement this method and
   /// usually answers with a method-not-found error. Some stdio servers
