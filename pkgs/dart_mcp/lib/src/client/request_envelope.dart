@@ -111,9 +111,10 @@ Map<String, String> _mcpNameHeader(
   if (key == null) return const {};
   final value = params?[key];
   if (value is! String) {
+    final got = value == null ? 'nothing' : value.runtimeType;
     throw ArgumentError(
       'A "$method" request requires a String "$key" param to mirror into '
-      'the Mcp-Name header; got ${value == null ? 'nothing' : value.runtimeType}.',
+      'the Mcp-Name header; got $got.',
     );
   }
   return {'Mcp-Name': encodeMcpNameValue(value)};
