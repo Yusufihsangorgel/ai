@@ -13,6 +13,7 @@ import 'package:stream_channel/stream_channel.dart';
 import '../../stdio.dart';
 import '../api/api.dart';
 import '../shared.dart';
+import '../utils/constants.dart';
 
 part 'elicitation_support.dart';
 part 'roots_support.dart';
@@ -317,6 +318,52 @@ base class ServerConnection extends MCPBase {
       protocolVersion = serverVersion;
     }
     return response;
+  }
+
+  /// Asks the server which protocol versions and capabilities it supports,
+  /// without a handshake, see [DiscoverRequest].
+  ///
+  /// The 2026-07-28 revision asks a `server/discover` request to name the
+  /// protocol version and client capabilities in `_meta`, the same envelope
+  /// `handleStreamableHttpRequest` in `package:dart_mcp/streamable_http.dart`
+  /// requires of every request on that revision, so this method writes
+  /// [protocolVersion] and [capabilities] there, plus [clientInfo] when it is
+  /// given. Any other key in [meta], a progress token for instance, is passed
+  /// through unchanged; the keys this method writes always win over the
+  /// passthrough.
+  ///
+  /// A server on an earlier revision does not implement this method and
+  /// usually answers with a method-not-found error. Some stdio servers
+  /// instead exit on any request that reaches them before `initialize`, and
+  /// nothing here times out, so the returned future waits until the
+  /// connection closes in that case. Probe on a connection you can discard
+  /// when the server might predate the revision.
+  ///
+  /// Use [ProtocolVersion.selectMutuallySupported] on the result's
+  /// [DiscoverResult.supportedVersions] to pick which version to use next.
+  ///
+  /// This does not update this connection's [protocolVersion],
+  /// [serverCapabilities], or [serverInfo]: those describe what [initialize]
+  /// negotiated, and a discover call can happen instead of, before, or after
+  /// that handshake.
+  Future<DiscoverResult> discover({
+    required ProtocolVersion protocolVersion,
+    required ClientCapabilities capabilities,
+    Implementation? clientInfo,
+    MetaWithProgressToken? meta,
+  }) {
+    final callerMeta = meta as Map<String, Object?>?;
+    return sendRequest(
+      DiscoverRequest.methodName,
+      DiscoverRequest(
+        meta: MetaWithProgressToken.fromMap({
+          ...?callerMeta,
+          Keys.protocolVersionMeta: protocolVersion.versionString,
+          if (clientInfo != null) Keys.clientInfoMeta: clientInfo,
+          Keys.clientCapabilitiesMeta: capabilities,
+        }),
+      ),
+    );
   }
 
   /// List all the tools from this server.

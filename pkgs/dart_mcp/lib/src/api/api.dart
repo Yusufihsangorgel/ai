@@ -123,6 +123,29 @@ enum ProtocolVersion {
   static ProtocolVersion? tryParse(String version) =>
       values.firstWhereOrNull((v) => v.versionString == version);
 
+  /// Returns the newest version in [supported] that this API recognizes, or
+  /// `null` if none of them are.
+  ///
+  /// [supported] holds version strings as they appear on the wire, the shape
+  /// both [DiscoverResult.supportedVersions] and the `supported` list a
+  /// `-32022 Unsupported protocol version` error carries use. The 2026-07-28
+  /// revision's version negotiation section says a client that gets either
+  /// one "SHOULD select a mutually supported version from the supported list
+  /// and retry the request, or surface an error to the user if no compatible
+  /// version exists"; a `null` result is that second case.
+  ///
+  /// A version this package does not know is dropped rather than treated as
+  /// a mismatch, since a server can list versions from after this package
+  /// was published.
+  static ProtocolVersion? selectMutuallySupported(Iterable<String> supported) {
+    ProtocolVersion? best;
+    for (final version in supported) {
+      final parsed = tryParse(version);
+      if (parsed != null && (best == null || parsed > best)) best = parsed;
+    }
+    return best;
+  }
+
   /// The oldest version supported by the current API.
   static const oldestSupported = ProtocolVersion.v2024_11_05;
 
@@ -150,7 +173,7 @@ enum ProtocolVersion {
 
 /// A progress token, used to associate progress notifications with the original
 /// request.
-extension type ProgressToken(/*String|int*/ Object _) {}
+extension type ProgressToken( /*String|int*/ Object _) {}
 
 /// An opaque token used to represent a cursor for pagination.
 extension type Cursor(String _) {}
@@ -324,7 +347,7 @@ extension type CancelledNotification.fromMap(Map<String, Object?> _value)
 }
 
 /// An opaque request ID.
-extension type RequestId(/*String|int*/ Object _) {}
+extension type RequestId( /*String|int*/ Object _) {}
 
 /// A ping, issued by either the server or the client, to check that the other
 /// party is still alive.

@@ -173,6 +173,21 @@
   Streamable HTTP handler already requires; the server map travels with
   `ServerCapabilities`, which is held by the legacy `initialize` result and
   by `DiscoverResult`.
+- Add `ServerConnection.discover`, the client side of `server/discover`. It
+  needs no handshake, so it can run before `initialize`; some stdio servers
+  exit on any request that reaches them before that, so probe on a
+  connection you can discard when the server might predate the revision.
+  Writes `protocolVersion` and `capabilities` into the request's `_meta`
+  under the same reserved keys `handleStreamableHttpRequest` already
+  requires, passing through any other key the caller gave. Add
+  `ProtocolVersion.selectMutuallySupported`, which picks the newest version
+  this package recognizes out of a `List<String>` like
+  `DiscoverResult.supportedVersions`, dropping versions it does not know
+  rather than treating them as a mismatch; the 2026-07-28 revision's version
+  negotiation section asks a client that gets such a list to select a
+  mutually supported version from it. This adds the client call and version
+  selection only; the HTTP channel `discover` needs to run before
+  `initialize` on a fresh connection is a separate change.
 
 ## 0.5.2
 
