@@ -75,10 +75,26 @@ import 'src/utils/json_rpc_2_object.dart';
 ///
 /// `Mcp-Session-Id` and `Last-Event-ID` headers are ignored, and no session
 /// id is ever minted: sessions and resumable streams were removed in this
-/// revision. The `Mcp-Param-{Name}` headers this revision defines are not
-/// supported either: nothing here opts into `x-mcp-header`, so no such
-/// header is ever recognized, and it is ignored along with every other
-/// header this handler does not read.
+/// revision.
+///
+/// A `tools/call` whose tool schema marks a string, integer, or boolean
+/// property with the `x-mcp-header` annotation opts that property into the
+/// corresponding `Mcp-Param-{Name}` header: before the message reaches the
+/// server, this handler looks the schema up on the very server instance that
+/// would otherwise dispatch it, and for every such property present with a
+/// non-`null` value in `params.arguments`, the matching header is required
+/// and validated against the argument. A value wrapped as `=?base64?...?=`
+/// is base64-decoded before the comparison and rejected on invalid padding
+/// or characters; any other value is compared literally, except an integer
+/// property, which is compared numerically. An annotated property nested
+/// inside another `object` property is honored the same way, as long as
+/// every step down to it is a `properties` key: a property reachable only
+/// through `items`, a schema combinator (`oneOf`, `anyOf`, `allOf`, `not`),
+/// a conditional (`if`/`then`/`else`), or `$ref` is not statically
+/// reachable from the schema root and its annotation is ignored. A property
+/// this schema does not annotate, and every header on a request this schema
+/// lookup fails for, is ignored along with every other header this handler
+/// does not read.
 ///
 /// Notifications the server produces while handling the request are passed
 /// to [onNotification]; a JSON response body cannot carry them, so without a
@@ -412,6 +428,13 @@ Future<void> handleStreamableHttpRequest(
     }
   }
 
+  final initialization = MCPServerInitialization(
+    protocolVersion: protocolVersion,
+    clientCapabilities: ClientCapabilities.fromMap(capabilities),
+    clientInfo: clientInfo == null ? null : Implementation.fromMap(clientInfo),
+    logLevel: logLevel,
+  );
+
   if (!protocolVersion.methodIsValid(method) && _someRevisionDefines(method)) {
     // A method an earlier revision defined and this one took out is unknown
     // here, not a dispatcher error. A mixin or a capability registers handlers
@@ -433,15 +456,13 @@ Future<void> handleStreamableHttpRequest(
   try {
     result = await handleRequestScopedMessage(
       decoded,
-      MCPServerInitialization(
-        protocolVersion: protocolVersion,
-        clientCapabilities: ClientCapabilities.fromMap(capabilities),
-        clientInfo:
-            clientInfo == null ? null : Implementation.fromMap(clientInfo),
-        logLevel: logLevel,
-      ),
+      initialization,
       serverFactory,
       onNotification: onNotification,
+      beforeDispatch:
+          method == CallToolRequest.methodName
+              ? (server) => _checkMcpParamHeaders(request, params, server)
+              : null,
     );
   } catch (_) {
     // The server could not be built for this request. Answer before the error
@@ -586,3 +607,168 @@ const _mcpNameParams = {
   GetPromptRequest.methodName: Keys.name,
   ReadResourceRequest.methodName: Keys.uri,
 };
+
+/// The prefix of the header a property's `x-mcp-header` annotation names, so
+/// a property annotated `x-mcp-header: "Region"` is mirrored on
+/// `Mcp-Param-Region`.
+const _mcpParamHeaderPrefix = 'Mcp-Param-';
+
+/// Validates the `Mcp-Param-{Name}` headers [request] carries for a
+/// `tools/call` whose body is `params` [params], against the schema
+/// [server] has the named tool registered under.
+///
+/// Passed as `beforeDispatch` to [handleRequestScopedMessage], which calls
+/// this with the very server the message would otherwise be dispatched to,
+/// once it is initialized: that is what lets this ask the server for a
+/// tool's `inputSchema` without standing up a second one to ask. A `name`
+/// which is not a String, a [server] which does not mix in [ToolsSupport],
+/// or a name that lookup does not find has nothing here to validate: the
+/// dispatch [handleRequestScopedMessage] performs next answers it in the
+/// ordinary way, a `tools/call` error for the last case.
+///
+/// A property this schema annotates but the request gives a `null` value or
+/// omits entirely is not checked, per the specification's requirement that a
+/// server "MUST NOT expect the header" in that case; only a header for a
+/// property with a value present in `params.arguments` is required and
+/// validated. A property nested inside another `object` property is
+/// checked the same way [_checkMcpParamHeadersForProperties] documents.
+///
+/// Returns the [RpcException] to reject the request with, or `null` when
+/// every annotated property with a value present in `params.arguments`
+/// matches its header.
+Future<RpcException?> _checkMcpParamHeaders(
+  HttpRequest request,
+  Map<String, Object?> params,
+  MCPServer server,
+) async {
+  if (server is! ToolsSupport) return null;
+  final toolName = params[Keys.name];
+  if (toolName is! String) return null;
+
+  final tools = (await server.listTools()).tools;
+  final tool = tools.firstWhereOrNull((tool) => tool.name == toolName);
+  if (tool == null) return null;
+
+  final properties = tool.inputSchema.properties;
+  if (properties == null) return null;
+
+  final arguments = params[Keys.arguments];
+  final argumentMap =
+      arguments is Map<String, Object?> ? arguments : const <String, Object?>{};
+
+  return _checkMcpParamHeadersForProperties(
+    request,
+    properties,
+    argumentMap,
+    '',
+  );
+}
+
+/// The work [_checkMcpParamHeaders] does for the schema root, and the step
+/// it takes for every `object` property it descends into: validates the
+/// `Mcp-Param-{Name}` header for every property in [properties] that
+/// annotates `x-mcp-header`, reading its value from [argumentMap], and
+/// recurses into an `object` property's own `properties` with the argument
+/// map found at that property, so a property several `object`s deep is
+/// checked the same way a top-level one is.
+///
+/// [pathPrefix] is the dotted path from `params.arguments` down to
+/// [argumentMap] (empty at the root, otherwise ending in `.`), used only to
+/// name the property an error message is about.
+///
+/// A nested schema is only ever read through a property's own `properties`
+/// map here, never through `items`, `oneOf`, `anyOf`, `allOf`, `not`, `if`,
+/// `then`, `else`, or `$ref`: a property declared inside one of those is not
+/// statically reachable from the schema root through a chain of
+/// `properties` keys alone, so this never visits it and it is never
+/// checked, per the specification's restriction on which properties
+/// `x-mcp-header` applies to. An `object` property whose own `properties`
+/// is absent, because it is defined through one of those instead, is
+/// likewise left alone: there is nothing under it this can reach.
+///
+/// Returns the [RpcException] to reject the request with, or `null` when
+/// every annotated property [properties] (and everything it reaches through
+/// nested `object` properties) with a value present in [argumentMap]
+/// matches its header.
+RpcException? _checkMcpParamHeadersForProperties(
+  HttpRequest request,
+  Map<String, Schema> properties,
+  Map<String, Object?> argumentMap,
+  String pathPrefix,
+) {
+  for (final MapEntry(key: property, value: schema) in properties.entries) {
+    final argumentValue = argumentMap[property];
+    final hasValue = argumentMap.containsKey(property) && argumentValue != null;
+    final propertyPath = '$pathPrefix$property';
+
+    if (schema.type == JsonType.object) {
+      // Only a `properties` step down from an `object` schema is followed;
+      // `items`, the combinators, the conditionals, and `$ref` are never
+      // read, so a property reachable only through one of those is never
+      // visited.
+      final nestedProperties = (schema as ObjectSchema).properties;
+      if (nestedProperties == null) continue;
+      final nestedArguments =
+          hasValue && argumentValue is Map<String, Object?>
+              ? argumentValue
+              : const <String, Object?>{};
+      final failure = _checkMcpParamHeadersForProperties(
+        request,
+        nestedProperties,
+        nestedArguments,
+        '$propertyPath.',
+      );
+      if (failure != null) return failure;
+      continue;
+    }
+
+    // The specification permits `x-mcp-header` only on integer, string, and
+    // boolean properties; a `number` (double) property is not permitted, so
+    // it is left alone here along with `array` and unspecified types.
+    if (schema.type != JsonType.string &&
+        schema.type != JsonType.int &&
+        schema.type != JsonType.bool) {
+      continue;
+    }
+    final suffix = (schema as Map<String, Object?>)[Keys.xMcpHeader];
+    if (suffix is! String) continue;
+    if (!hasValue) continue;
+
+    final headerName = '$_mcpParamHeaderPrefix$suffix';
+    final headerValue = _singleHeader(request, headerName);
+    if (headerValue == null) {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'A single $headerName header is required because '
+        'params.arguments.$propertyPath is present',
+      );
+    }
+    final String decodedValue;
+    try {
+      decodedValue = _decodeSentinel(headerValue);
+    } on FormatException {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'The $headerName header is not valid base64',
+      );
+    }
+    // Integer values are compared numerically, per the specification's note
+    // that `42.0` and `42` are considered equal; every other type this loop
+    // reaches (string and boolean) already has its wire encoding as the
+    // literal decoded string ("true"/"false" for a boolean), so a literal
+    // comparison covers it.
+    final matches =
+        schema.type == JsonType.int
+            ? argumentValue is num &&
+                num.tryParse(decodedValue) == argumentValue
+            : decodedValue == argumentValue.toString();
+    if (!matches) {
+      return RpcException(
+        McpErrorCodes.headerMismatch,
+        'The $headerName header does not match '
+        'params.arguments.$propertyPath',
+      );
+    }
+  }
+  return null;
+}

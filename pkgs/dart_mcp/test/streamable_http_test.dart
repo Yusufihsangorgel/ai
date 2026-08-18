@@ -591,6 +591,269 @@ void main() {
     });
   });
 
+  group('x-mcp-header custom headers', () {
+    /// A `tools/call` body for `test/withHeaderParam` with [arguments].
+    Map<String, Object?> callWithHeaderParam(Map<String, Object?> arguments) =>
+        body(
+          callTool,
+          params: {
+            Keys.name: 'test/withHeaderParam',
+            Keys.arguments: arguments,
+          },
+        );
+
+    /// The transport, `Mcp-Method`, and `Mcp-Name` headers for a
+    /// `test/withHeaderParam` call, plus any [extra] headers.
+    Map<String, String> callWithHeaderParamHeaders([
+      Map<String, String> extra = const {},
+    ]) => {...headers(callTool), 'Mcp-Name': 'test/withHeaderParam', ...extra};
+
+    test('ignores an Mcp-Param header for a property this tool does not '
+        'annotate', () async {
+      // `test/withHeaderParam`'s schema does not put `x-mcp-header` on
+      // `label`, so `Mcp-Param-Label` is a header this handler does not
+      // look up for it, and a value which contradicts the body is ignored
+      // rather than guessed at.
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Label': 'wrong'}),
+        json: callWithHeaderParam({'label': 'right'}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('accepts a literal header value which matches the body', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Region': 'us-west1'}),
+        json: callWithHeaderParam({'region': 'us-west1'}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a header value which does not match the body', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Region': 'eu-west1'}),
+        json: callWithHeaderParam({'region': 'us-west1'}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+      expect(
+        errorMessage(text),
+        contains('Mcp-Param-Region header does not match'),
+      );
+    });
+
+    test('rejects a request missing a header its body requires', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders(),
+        json: callWithHeaderParam({'region': 'us-west1'}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+    });
+
+    test(
+      'does not require a header for an argument the body leaves null',
+      () async {
+        final (status, _, text) = await post(
+          headers: callWithHeaderParamHeaders(),
+          json: callWithHeaderParam({'region': null}),
+        );
+        expect(status, 200);
+        expect(errorCode(text), isNull);
+      },
+    );
+
+    test('decodes a base64-sentinel header value before comparing', () async {
+      final encoded = base64.encode(utf8.encode('us-west1'));
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({
+          'Mcp-Param-Region': '=?base64?$encoded?=',
+        }),
+        json: callWithHeaderParam({'region': 'us-west1'}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a base64-sentinel header value with bad padding', () async {
+      final (status, _, text) = await post(
+        // The base64 encoding of "us-west1" is "dXMtd2VzdDE=", with its
+        // required padding character stripped here.
+        headers: callWithHeaderParamHeaders({
+          'Mcp-Param-Region': '=?base64?dXMtd2VzdDE?=',
+        }),
+        json: callWithHeaderParam({'region': 'us-west1'}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+      expect(errorMessage(text), contains('not valid base64'));
+    });
+
+    test(
+      'rejects a base64-sentinel header value with invalid characters',
+      () async {
+        final (status, _, text) = await post(
+          headers: callWithHeaderParamHeaders({
+            'Mcp-Param-Region': '=?base64?not!valid!base64?=',
+          }),
+          json: callWithHeaderParam({'region': 'us-west1'}),
+        );
+        expect(status, 400);
+        expect(errorCode(text), McpErrorCodes.headerMismatch);
+      },
+    );
+
+    test('treats a value missing the base64 prefix as a literal', () async {
+      // "dXMtd2VzdDE=" is valid base64, but without the `=?base64?` prefix
+      // it is compared to the body as-is instead of being decoded.
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({
+          'Mcp-Param-Region': 'dXMtd2VzdDE=',
+        }),
+        json: callWithHeaderParam({'region': 'dXMtd2VzdDE='}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('treats a value missing the base64 suffix as a literal', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({
+          'Mcp-Param-Region': '=?base64?dXMtd2VzdDE=',
+        }),
+        json: callWithHeaderParam({'region': '=?base64?dXMtd2VzdDE='}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('compares an integer property numerically', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Count': '42'}),
+        json: callWithHeaderParam({'count': 42}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a mismatched integer property', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Count': '7'}),
+        json: callWithHeaderParam({'count': 42}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+    });
+  });
+
+  group('nested x-mcp-header custom headers', () {
+    /// A `tools/call` body for `test/withNestedHeaderParam` with
+    /// [arguments].
+    Map<String, Object?> callWithNestedHeaderParam(
+      Map<String, Object?> arguments,
+    ) => body(
+      callTool,
+      params: {
+        Keys.name: 'test/withNestedHeaderParam',
+        Keys.arguments: arguments,
+      },
+    );
+
+    /// The transport, `Mcp-Method`, and `Mcp-Name` headers for a
+    /// `test/withNestedHeaderParam` call, plus any [extra] headers.
+    Map<String, String> callWithNestedHeaderParamHeaders([
+      Map<String, String> extra = const {},
+    ]) => {
+      ...headers(callTool),
+      'Mcp-Name': 'test/withNestedHeaderParam',
+      ...extra,
+    };
+
+    test('accepts a header matching a property nested inside an object '
+        'property', () async {
+      final (status, _, text) = await post(
+        headers: callWithNestedHeaderParamHeaders({
+          'Mcp-Param-Region': 'us-west1',
+        }),
+        json: callWithNestedHeaderParam({
+          'location': {'region': 'us-west1'},
+        }),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a header that does not match a property nested inside an '
+        'object property', () async {
+      final (status, _, text) = await post(
+        headers: callWithNestedHeaderParamHeaders({
+          'Mcp-Param-Region': 'eu-west1',
+        }),
+        json: callWithNestedHeaderParam({
+          'location': {'region': 'us-west1'},
+        }),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+    });
+
+    test(
+      'rejects a request missing the header a nested property requires',
+      () async {
+        final (status, _, text) = await post(
+          headers: callWithNestedHeaderParamHeaders(),
+          json: callWithNestedHeaderParam({
+            'location': {'region': 'us-west1'},
+          }),
+        );
+        expect(status, 400);
+        expect(errorCode(text), McpErrorCodes.headerMismatch);
+      },
+    );
+
+    test('does not require a header when the object carrying a nested '
+        'property is absent', () async {
+      final (status, _, text) = await post(
+        headers: callWithNestedHeaderParamHeaders(),
+        json: callWithNestedHeaderParam(const {}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test(
+      'ignores an annotation reachable only through a list item schema',
+      () async {
+        final (status, _, text) = await post(
+          headers: callWithNestedHeaderParamHeaders(),
+          json: callWithNestedHeaderParam({
+            'tags': [
+              {'region': 'us-west1'},
+            ],
+          }),
+        );
+        expect(status, 200);
+        expect(errorCode(text), isNull);
+      },
+    );
+
+    test(
+      'ignores an annotation reachable only through a oneOf branch',
+      () async {
+        final (status, _, text) = await post(
+          headers: callWithNestedHeaderParamHeaders(),
+          json: callWithNestedHeaderParam({
+            'variant': {'region': 'us-west1'},
+          }),
+        );
+        expect(status, 200);
+        expect(errorCode(text), isNull);
+      },
+    );
+  });
+
   group('removed 2025-11-25 mechanisms', () {
     test('ignores an Mcp-Session-Id header and mints none', () async {
       final (status, responseHeaders, text) = await post(
@@ -606,28 +869,6 @@ void main() {
       final (status, _, text) = await post(
         headers: {...headers(listTools), 'Last-Event-ID': '42'},
         json: body(listTools),
-      );
-      expect(status, 200);
-      expect(errorCode(text), isNull);
-    });
-
-    test('ignores an Mcp-Param header which contradicts the body', () async {
-      // Nothing here opts into `x-mcp-header`, so `Mcp-Param-*` is a header
-      // this handler does not recognize, and it is ignored rather than
-      // guessed at.
-      final (status, _, text) = await post(
-        headers: {
-          ...headers(callTool),
-          'Mcp-Name': 'test/version',
-          'Mcp-Param-Region': 'eu-west1',
-        },
-        json: body(
-          callTool,
-          params: {
-            Keys.name: 'test/version',
-            Keys.arguments: {'region': 'us-west1'},
-          },
-        ),
       );
       expect(status, 200);
       expect(errorCode(text), isNull);
@@ -1238,6 +1479,77 @@ base class _HttpTestServer extends MCPServer with LoggingSupport, ToolsSupport {
     registerTool(
       Tool(name: 'test/version', inputSchema: ObjectSchema()),
       (_) => CallToolResult(content: [TextContent(text: '1.2.3')]),
+    );
+    registerTool(
+      Tool(
+        name: 'test/withHeaderParam',
+        inputSchema: ObjectSchema(
+          properties: {
+            // `x-mcp-header` is a schema extension the typed [Schema]
+            // factories do not have a parameter for, so these are built
+            // from a raw map instead.
+            'region': Schema.fromMap({
+              Keys.type: JsonType.string.typeName,
+              Keys.xMcpHeader: 'Region',
+            }),
+            'count': Schema.fromMap({
+              Keys.type: JsonType.int.typeName,
+              Keys.xMcpHeader: 'Count',
+            }),
+            'label': Schema.string(),
+          },
+        ),
+      ),
+      (_) => CallToolResult(content: [TextContent(text: 'ok')]),
+    );
+    registerTool(
+      Tool(
+        name: 'test/withNestedHeaderParam',
+        inputSchema: ObjectSchema(
+          properties: {
+            // A property annotated several `properties` steps down from the
+            // root, to exercise the same annotation nested inside an
+            // `object` property.
+            'location': ObjectSchema(
+              properties: {
+                'region': Schema.fromMap({
+                  Keys.type: JsonType.string.typeName,
+                  Keys.xMcpHeader: 'Region',
+                }),
+              },
+            ),
+            // The same annotation, but reachable only through a list
+            // item's schema, which the specification's `properties`-only
+            // chain does not pass through.
+            'tags': Schema.list(
+              items: ObjectSchema(
+                properties: {
+                  'region': Schema.fromMap({
+                    Keys.type: JsonType.string.typeName,
+                    Keys.xMcpHeader: 'Region',
+                  }),
+                },
+              ),
+            ),
+            // The same annotation again, reachable only through a `oneOf`
+            // branch, which the chain does not pass through either.
+            'variant': Schema.combined(
+              type: JsonType.object,
+              oneOf: [
+                ObjectSchema(
+                  properties: {
+                    'region': Schema.fromMap({
+                      Keys.type: JsonType.string.typeName,
+                      Keys.xMcpHeader: 'Region',
+                    }),
+                  },
+                ),
+              ],
+            ),
+          },
+        ),
+      ),
+      (_) => CallToolResult(content: [TextContent(text: 'ok')]),
     );
     registerTool(
       Tool(name: 'test/throw', inputSchema: ObjectSchema()),

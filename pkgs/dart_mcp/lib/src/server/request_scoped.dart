@@ -67,6 +67,16 @@ typedef MCPServerFactory =
 /// [RpcException] inside their handler, or with a [StateError] if the exchange
 /// has already been torn down.
 ///
+/// If [beforeDispatch] is given, it runs once the server is initialized and
+/// before [message] is delivered to it, with the same server instance
+/// [message] would otherwise be dispatched to. A non-`null` result short
+/// circuits the exchange: [message] is never delivered, and the returned
+/// [RpcException] is serialized as the response instead (or discarded, for a
+/// notification). This is how a transport whose validation needs a fact only
+/// the server exposes — such as a tool's `inputSchema` — can reject a message
+/// before dispatch without standing up a second, throwaway server to look
+/// that fact up.
+///
 /// Throws an [ArgumentError] if [message] is not a JSON-RPC request or
 /// notification (no string `method`, a `null` id, or a `result` or `error`
 /// member), or if its method is the legacy `initialize` request or
@@ -81,6 +91,7 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   MCPServerInitialization initialization,
   MCPServerFactory serverFactory, {
   void Function(Map<String, Object?> notification)? onNotification,
+  FutureOr<RpcException?> Function(MCPServer server)? beforeDispatch,
 }) async {
   final object = JsonRpc2Object.fromMap(message);
   if (object.kind == JsonRpc2Kind.response) {
@@ -194,6 +205,14 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   try {
     await server.initialize(initialization);
     server.handleInitialized();
+    final rejection = await beforeDispatch?.call(server);
+    if (rejection != null) {
+      // The message is never added to `inbound`, so the server never sees
+      // it; the `finally` block below still tears the server down exactly
+      // as it would after a dispatched exchange, by closing `inbound` on an
+      // empty stream.
+      return isRequest ? rejection.serialize(message) : null;
+    }
     inbound.add(message);
     if (isRequest) return await response.future;
     return null;

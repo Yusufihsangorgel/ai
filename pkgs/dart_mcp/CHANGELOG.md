@@ -173,6 +173,17 @@
   Streamable HTTP handler already requires; the server map travels with
   `ServerCapabilities`, which is held by the legacy `initialize` result and
   by `DiscoverResult`.
+- Support `x-mcp-header` in `handleStreamableHttpRequest`, see
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#custom-headers-from-tool-parameters.
+  For a `tools/call` naming a tool whose input schema annotates a string,
+  integer, or boolean property with `x-mcp-header`, the matching
+  `Mcp-Param-{Name}` header is now required and validated against
+  `params.arguments` for every such property present with a non-`null`
+  value, including one nested under `properties`, decoding the
+  `=?base64?...?=` sentinel first when the header uses it. A mismatched, missing, or malformed header answers `400 Bad Request`
+  with `McpErrorCodes.headerMismatch`, the same as an `Mcp-Name` mismatch.
+  `handleRequestScopedMessage` gained the `beforeDispatch` parameter this
+  uses to reject the request without a second server.
 
 ## 0.5.2
 
