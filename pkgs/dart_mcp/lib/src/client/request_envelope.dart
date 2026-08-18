@@ -30,11 +30,17 @@ final class RequestEnvelope {
   /// The `io.modelcontextprotocol/*` keys to merge into the request's
   /// `params[Keys.meta]` object before it is encoded.
   ///
-  /// A caller with its own `_meta` keys to send should spread this map
-  /// first and its own keys last, so a user-supplied key wins over the
-  /// auto-attached one — the same precedence
-  /// `Client._envelopeOutbound` gives the envelope in the emsal
-  /// `typescript-sdk` (`core-internal/src/shared/protocol.ts`).
+  /// These are the spec's own reserved `_meta` keys for a request
+  /// (`basic/index`'s "Reserved keys" table), and `protocolVersion` and
+  /// `clientCapabilities` are marked required there: a request missing
+  /// either is malformed and the server MUST reject it with `-32602`. A
+  /// caller that could overwrite one of them through its own `_meta` could
+  /// produce exactly that malformed request, so a caller with keys of its
+  /// own to send should spread them first and this map last — this map's
+  /// entries always win over a caller-supplied key of the same name, and
+  /// any other key the caller sends (a progress token, for instance) is
+  /// untouched, since this builder never writes it. `ServerConnection.discover`
+  /// merges its own reserved keys the same way (`client.dart`).
   final Map<String, Object?> meta;
 
   /// The HTTP headers to send alongside the request body: `Content-Type`,

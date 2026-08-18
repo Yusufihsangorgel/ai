@@ -124,22 +124,30 @@ void main() {
       );
     });
 
-    test('user-supplied precedence: meta is a fresh map the caller merges', () {
+    test('reserved-key precedence: meta is a fresh map the caller merges '
+        'last, so it wins over a caller key of the same name', () {
       // buildRequestEnvelope never sees or mutates a `_meta` a caller has
-      // already built; the merge-with-caller-wins-last responsibility
+      // already built; the merge-with-envelope-wins-last responsibility
       // belongs to whoever calls this (documented on [RequestEnvelope.meta]).
+      // protocolVersion and clientCapabilities are the spec's required
+      // reserved keys (basic/index) — a caller value that reached the wire
+      // instead would make the request malformed, so the envelope's own
+      // value has to win.
       final envelope = buildRequestEnvelope(
         method: ListToolsRequest.methodName,
         protocolVersion: ProtocolVersion.v2026_07_28,
         clientCapabilities: ClientCapabilities(),
       );
       final merged = {
+        'custom-key': 'kept',
+        Keys.clientCapabilitiesMeta: 'stale-caller-value',
         ...envelope.meta,
-        'custom-key': 'user-wins',
-        Keys.clientCapabilitiesMeta: 'user-override',
       };
-      expect(merged[Keys.clientCapabilitiesMeta], 'user-override');
-      expect(merged['custom-key'], 'user-wins');
+      expect(
+        merged[Keys.clientCapabilitiesMeta],
+        envelope.meta[Keys.clientCapabilitiesMeta],
+      );
+      expect(merged['custom-key'], 'kept');
     });
   });
 
