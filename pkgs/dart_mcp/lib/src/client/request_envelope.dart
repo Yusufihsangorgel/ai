@@ -36,7 +36,7 @@ final class RequestEnvelope {
   /// either is malformed and the server MUST reject it with `-32602`. A
   /// caller that could overwrite one of them through its own `_meta` could
   /// produce exactly that malformed request, so a caller with keys of its
-  /// own to send should spread them first and this map last — this map's
+  /// own to send should spread them first and this map last. This map's
   /// entries always win over a caller-supplied key of the same name, and
   /// any other key the caller sends (a progress token, for instance) is
   /// untouched, since this builder never writes it. `ServerConnection.discover`
@@ -44,8 +44,8 @@ final class RequestEnvelope {
   final Map<String, Object?> meta;
 
   /// The HTTP headers to send alongside the request body: `Content-Type`,
-  /// `Accept`, `MCP-Protocol-Version`, `Mcp-Method`, and — for the three
-  /// methods [mcpNameParams] names — `Mcp-Name`.
+  /// `Accept`, `MCP-Protocol-Version`, `Mcp-Method`, and, for the three
+  /// methods [mcpNameParams] names, `Mcp-Name`.
   final Map<String, String> headers;
 }
 
@@ -67,7 +67,7 @@ const mcpNameParams = <String, String>{
 /// Builds the [RequestEnvelope] for one outgoing [method] call.
 ///
 /// [params] is the request's own `params` object, read only to find the
-/// [mcpNameParams] value to mirror into `Mcp-Name` — this function never
+/// [mcpNameParams] value to mirror into `Mcp-Name`. This function never
 /// mutates it, and the returned [RequestEnvelope.meta] is a separate object
 /// a caller merges in on top.
 ///
@@ -133,9 +133,9 @@ const _sentinelSuffix = '?=';
 
 /// Encodes [value] for the `Mcp-Name` header: wraps it in the
 /// `=?base64?…?=` sentinel whenever it cannot survive as a plain HTTP
-/// header field value — empty, already sentinel-shaped, carrying
+/// header field value: empty, already sentinel-shaped, carrying
 /// leading/trailing whitespace, or containing any character outside
-/// visible ASCII (`0x21`–`0x7E`), space, or horizontal tab — and passes it
+/// visible ASCII (`0x21`–`0x7E`), space, or horizontal tab, and passes it
 /// through unchanged otherwise.
 ///
 /// Mirrors `_decodeSentinel` in `streamable_http.dart`, which this
