@@ -4,3 +4,4 @@
 
 export 'src/api/api.dart';
 export 'src/client/client.dart';
+export 'src/client/request_envelope.dart';
