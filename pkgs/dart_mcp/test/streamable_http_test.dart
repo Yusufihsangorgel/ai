@@ -775,6 +775,24 @@ void main() {
       expect(status, 400);
       expect(errorCode(text), McpErrorCodes.headerMismatch);
     });
+
+    test('compares a boolean property', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Flag': 'true'}),
+        json: callWithHeaderParam({'flag': true}),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a mismatched boolean property', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Flag': 'false'}),
+        json: callWithHeaderParam({'flag': true}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+    });
   });
 
   group('nested x-mcp-header custom headers', () {
@@ -1764,6 +1782,10 @@ base class _HttpTestServer extends MCPServer with LoggingSupport, ToolsSupport {
             'count': Schema.fromMap({
               Keys.type: JsonType.int.typeName,
               Keys.xMcpHeader: 'Count',
+            }),
+            'flag': Schema.fromMap({
+              Keys.type: JsonType.bool.typeName,
+              Keys.xMcpHeader: 'Flag',
             }),
             'label': Schema.string(),
           },
