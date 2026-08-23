@@ -257,10 +257,11 @@
   For a `tools/call` naming a tool whose input schema annotates a string,
   integer, or boolean property with `x-mcp-header`, the matching
   `Mcp-Param-{Name}` header is now required and validated against
-  `params.arguments` for every such property present with a non-`null`
-  value, including one nested under `properties`, decoding the
-  `=?base64?...?=` sentinel first when the header uses it. A mismatched, missing, or malformed header answers `400 Bad Request`
-  with `McpErrorCodes.headerMismatch`, the same as an `Mcp-Name` mismatch.
+  `params.arguments` for every such property present with a non-`null` value,
+  including one nested under `properties`, decoding the `=?base64?...?=`
+  sentinel first when the header uses it. A mismatched, missing, or malformed
+  header answers `400 Bad Request` with `McpErrorCodes.headerMismatch`, the same
+  as an `Mcp-Name` mismatch.
   `handleRequestScopedMessage` gained the `beforeDispatch` parameter this
   uses to reject the request without a second server.
 - Point the documentation at `modelcontextprotocol.io` and at protocol
