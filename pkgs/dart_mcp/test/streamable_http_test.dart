@@ -589,6 +589,17 @@ void main() {
       expect(errorCode(text), McpErrorCodes.headerMismatch);
     });
 
+    test('rejects a url-safe base64 sentinel', () async {
+      // Dart's decoder takes the url-safe alphabet too, so `-` and `_` would
+      // otherwise decode to a name the client never spelled.
+      final (status, _, text) = await post(
+        headers: {...headers(callTool), 'Mcp-Name': '=?base64?YWJ-eg==?='},
+        json: body(callTool, params: {Keys.name: 'ab~z'}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+    });
+
     test('rejects an overlapping base64 sentinel without hanging', () async {
       // '=?base64?=' is 10 characters: the prefix and suffix share a '?', so
       // a naive slice throws a RangeError the handler would never answer.
@@ -759,12 +770,39 @@ void main() {
     });
 
     test('compares an integer property numerically', () async {
+      // The specification's own example of a numeric comparison: the header
+      // spells the number differently and still matches.
+      for (final header in ['42', '42.0']) {
+        final (status, _, text) = await post(
+          headers: callWithHeaderParamHeaders({'Mcp-Param-Count': header}),
+          json: callWithHeaderParam({'count': 42}),
+        );
+        expect(status, 200, reason: header);
+        expect(errorCode(text), isNull, reason: header);
+      }
+    });
+
+    test('rejects an integer header which is not a decimal', () async {
+      // A client is told to send the decimal spelling, so anything else in the
+      // header is a value some other component wrote. Letting `0x2a` match a
+      // body of `42` would be the disagreement this check exists to catch.
+      // Leading whitespace never reaches here: the HTTP layer trims a header
+      // value before this sees it.
+      for (final header in ['0x2a', '0X2A', '+42', '42.']) {
+        final (status, _, text) = await post(
+          headers: callWithHeaderParamHeaders({'Mcp-Param-Count': header}),
+          json: callWithHeaderParam({'count': 42}),
+        );
+        expect(status, 400, reason: header);
+        expect(errorCode(text), McpErrorCodes.headerMismatch, reason: header);
+      }
+
       final (status, _, text) = await post(
-        headers: callWithHeaderParamHeaders({'Mcp-Param-Count': '42'}),
-        json: callWithHeaderParam({'count': 42}),
+        headers: callWithHeaderParamHeaders({'Mcp-Param-Count': '1e3'}),
+        json: callWithHeaderParam({'count': 1000}),
       );
-      expect(status, 200);
-      expect(errorCode(text), isNull);
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
     });
 
     test('rejects a mismatched integer property', () async {

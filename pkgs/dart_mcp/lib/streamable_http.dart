@@ -645,13 +645,28 @@ bool _accepts(HttpRequest request, String mimeType) {
 /// Decodes the `=?base64?...?=` sentinel encoding, passing other values
 /// through unchanged.
 ///
-/// Throws a [FormatException] if the sentinel payload is not valid base64.
-String _decodeSentinel(String value) =>
-    // The `=?base64?` prefix is 9 characters and the `?=` suffix is 2; under
-    // 11 characters they overlap, so guard the length before slicing.
-    value.length >= 11 && value.startsWith('=?base64?') && value.endsWith('?=')
-        ? utf8.decode(base64.decode(value.substring(9, value.length - 2)))
-        : value;
+/// Throws a [FormatException] if the sentinel payload is not standard base64.
+/// Dart's decoder also accepts the url-safe alphabet, which the specification
+/// does not name here, so a payload carrying `-` or `_` is rejected rather
+/// than decoded to something the client never wrote.
+String _decodeSentinel(String value) {
+  // The `=?base64?` prefix is 9 characters and the `?=` suffix is 2; under
+  // 11 characters they overlap, so guard the length before slicing.
+  if (value.length < 11 ||
+      !value.startsWith('=?base64?') ||
+      !value.endsWith('?=')) {
+    return value;
+  }
+  final payload = value.substring(9, value.length - 2);
+  if (!_standardBase64.hasMatch(payload)) {
+    throw FormatException('Not standard base64', payload);
+  }
+  return utf8.decode(base64.decode(payload));
+}
+
+/// The standard base64 alphabet with its padding, which is what the
+/// `=?base64?...?=` sentinel carries.
+final _standardBase64 = RegExp(r'^[A-Za-z0-9+/]*={0,2}$');
 
 // Header field names are case insensitive, so these are used both to look
 // headers up and to name them in error messages, in the casing the
@@ -685,6 +700,12 @@ const _mcpNameParams = {
   GetPromptRequest.methodName: Keys.name,
   ReadResourceRequest.methodName: Keys.uri,
 };
+
+/// A number spelled the way the specification tells a client to spell one: an
+/// optional sign, digits, and an optional fractional part.
+///
+/// https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http
+final _decimal = RegExp(r'^-?\d+(\.\d+)?$');
 
 /// The prefix of the header a property's `x-mcp-header` annotation names, so
 /// a property annotated `x-mcp-header: "Region"` is mirrored on
@@ -831,13 +852,19 @@ RpcException? _checkMcpParamHeadersForProperties(
       );
     }
     // Integer values are compared numerically, per the specification's note
-    // that `42.0` and `42` are considered equal; every other type this loop
+    // that `42.0` and `42` are considered equal. The header has to spell the
+    // number the way the specification tells a client to spell it, a decimal
+    // string, before that comparison runs: `num.tryParse` also accepts hex,
+    // exponents and a leading `+`, and no conforming client sends those. A
+    // header a proxy read as `0x2a` must not match a body which says `42`,
+    // which is the whole point of this check. Every other type this loop
     // reaches (string and boolean) already has its wire encoding as the
     // literal decoded string ("true"/"false" for a boolean), so a literal
     // comparison covers it.
     final matches =
         schema.type == JsonType.int
             ? argumentValue is num &&
+                _decimal.hasMatch(decodedValue) &&
                 num.tryParse(decodedValue) == argumentValue
             : decodedValue == argumentValue.toString();
     if (!matches) {
