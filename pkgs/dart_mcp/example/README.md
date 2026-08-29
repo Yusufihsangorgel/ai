@@ -10,9 +10,8 @@ To run the examples, run the client file directly, so for instance
 tools, connected to the example server that provides tools
 (at `example/tools_server.dart`).
 
-`streamable_http_server.dart` has no client pair, since this package does not
-have an HTTP client yet. Run it directly and it prints `curl` commands which
-call its tool and open a notification stream.
+`streamable_http_server.dart` has no client pair. Run it directly and it prints
+`curl` commands which call its tool and open a notification stream.
 
 # Full Featured Examples
 
