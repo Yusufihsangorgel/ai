@@ -10,8 +10,12 @@
 /// this package yet, so that is how to drive it. The command asks for progress
 /// and the tool reports it, so the answer comes back as an SSE response
 /// stream: the report first, then a result containing `Hello, world!`.
+///
+/// A second printed command opens `subscriptions/listen`. The host feeds
+/// that stream from other requests' notifications.
 library;
 
+import 'dart:async';
 import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
@@ -25,6 +29,8 @@ void main() async {
     0,
   );
   final endpoint = 'http://${httpServer.address.host}:${httpServer.port}$path';
+  // The host owns fan-out, the way it owns Origin checks below.
+  final notifications = StreamController<Map<String, Object?>>.broadcast();
 
   httpServer.listen((request) async {
     // The handler reads no path, so the one this server answers on is the
@@ -61,11 +67,16 @@ void main() async {
       await handleStreamableHttpRequest(
         request,
         MCPServerWithGreeting.new,
+        // One broadcast stream for every request. Adding [onNotification]
+        // values is what lets a change from `add-echo` reach a listen.
+        subscriptionNotifications: notifications.stream,
         // `greet` sends a notification when the request carries a progress
         // token, which the command below does. It goes out on the response
         // stream, and this callback is the host's own copy of it.
-        onNotification:
-            (notification) => io.stderr.writeln('notification: $notification'),
+        onNotification: (notification) {
+          io.stderr.writeln('notification: $notification');
+          notifications.add(notification);
+        },
       );
     } catch (error) {
       // The request already carries the failure. This is the host's copy.
@@ -74,6 +85,27 @@ void main() async {
   });
 
   print('Listening on $endpoint\n');
+  print('''
+Open a notification stream in one terminal:
+
+curl -N -sS $endpoint \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: application/json, text/event-stream' \\
+  -H 'MCP-Protocol-Version: 2026-07-28' \\
+  -H 'Mcp-Method: subscriptions/listen' \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "changes",
+    "method": "subscriptions/listen",
+    "params": {
+      "notifications": {"toolsListChanged": true},
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }'
+''');
   // `Mcp-Method` and `Mcp-Name` mirror the body so that intermediaries can
   // route and inspect the request without parsing it; `Mcp-Name` is only
   // required for the methods that name a target, such as `tools/call`.
@@ -100,10 +132,34 @@ curl -sS $endpoint \\
     }
   }'
 ''');
+  print('''
+From another terminal, register a tool so the listen stream receives
+notifications/tools/list_changed:
+
+curl -sS $endpoint \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: application/json, text/event-stream' \\
+  -H 'MCP-Protocol-Version: 2026-07-28' \\
+  -H 'Mcp-Method: tools/call' \\
+  -H 'Mcp-Name: add-echo' \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "add-echo",
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }'
+''');
 }
 
-/// A server with one tool, built fresh for each request.
-base class MCPServerWithGreeting extends MCPServer with ToolsSupport {
+/// A greeting server built fresh for each request.
+base class MCPServerWithGreeting extends MCPServer
+    with ToolsSupport, SubscriptionsSupport {
   MCPServerWithGreeting(super.channel)
     : super.fromStreamChannel(
         implementation: Implementation(
@@ -112,6 +168,7 @@ base class MCPServerWithGreeting extends MCPServer with ToolsSupport {
         ),
       ) {
     registerTool(greetTool, _greet);
+    registerTool(addEchoTool, _addEcho);
   }
 
   /// A tool that says hello to the name it is given.
@@ -122,6 +179,13 @@ base class MCPServerWithGreeting extends MCPServer with ToolsSupport {
       properties: {'name': Schema.string(description: 'Who to greet')},
       required: ['name'],
     ),
+  );
+
+  /// Registers a second tool so a listen stream can see a tools list change.
+  final addEchoTool = Tool(
+    name: 'add-echo',
+    description: 'registers an echo tool and notifies tools list listeners',
+    inputSchema: Schema.object(properties: {}),
   );
 
   /// The implementation of the `greet` tool.
@@ -141,5 +205,22 @@ base class MCPServerWithGreeting extends MCPServer with ToolsSupport {
     return CallToolResult(
       content: [TextContent(text: 'Hello, ${request.arguments!['name']}!')],
     );
+  }
+
+  CallToolResult _addEcho(CallToolRequest _) {
+    registerTool(
+      Tool(
+        name: 'echo',
+        description: 'repeats the text it is given',
+        inputSchema: Schema.object(
+          properties: {'text': Schema.string(description: 'Text to repeat')},
+          required: ['text'],
+        ),
+      ),
+      (echoRequest) => CallToolResult(
+        content: [TextContent(text: '${echoRequest.arguments!['text']}')],
+      ),
+    );
+    return CallToolResult(content: [TextContent(text: 'registered echo')]);
   }
 }

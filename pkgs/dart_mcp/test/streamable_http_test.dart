@@ -164,6 +164,44 @@ void main() {
   Object? errorMessage(String text) =>
       (decode(text)[Keys.error] as Map<String, Object?>?)?[Keys.message];
 
+  /// Opens a `subscriptions/listen` stream and waits for its acknowledgement.
+  Future<({StringBuffer chunks, Completer<void> done, MCPServer server})>
+  openListen({
+    required Map<String, Object?> filter,
+    Object id = 'listen',
+  }) async {
+    final client = HttpClient();
+    addTearDown(client.close);
+    final request = await client.postUrl(uri);
+    headers(SubscriptionsListenRequest.methodName).forEach(request.headers.set);
+    request.write(
+      jsonEncode(
+        body(
+          SubscriptionsListenRequest.methodName,
+          id: id,
+          params: {Keys.notifications: filter},
+        ),
+      ),
+    );
+    final response = await request.close();
+    final chunks = StringBuffer();
+    final acknowledged = Completer<void>();
+    final done = Completer<void>();
+    final subscription = response.transform(utf8.decoder).listen((chunk) {
+      chunks.write(chunk);
+      if (events(chunks.toString()).isNotEmpty && !acknowledged.isCompleted) {
+        acknowledged.complete();
+      }
+    }, onDone: done.complete);
+    addTearDown(subscription.cancel);
+    await acknowledged.future;
+    final server = servers.last;
+    addTearDown(() async {
+      if (server.isActive) await server.shutdown();
+    });
+    return (chunks: chunks, done: done, server: server);
+  }
+
   /// Sends [payload] over a raw socket and returns the raw response text.
   ///
   /// [HttpClient] refuses to send the malformed header values some tests
@@ -673,6 +711,176 @@ void main() {
         'listChanged': true,
       });
     });
+
+    test('a tools listChanged advertisement reaches a listen stream', () async {
+      serverFactory = _EquippedServer.new;
+      final (status, _, text) = await post(
+        headers: headers(DiscoverRequest.methodName),
+        json: body(DiscoverRequest.methodName),
+      );
+      expect(status, 200);
+      final capabilities =
+          (decode(text)[Keys.result] as Map<String, Object?>)[Keys.capabilities]
+              as Map<String, Object?>;
+      expect(
+        (capabilities['tools'] as Map<String, Object?>)[Keys.listChanged],
+        isTrue,
+      );
+
+      final listen = await openListen(
+        filter: {Keys.toolsListChanged: true},
+        id: 'tools-bit',
+      );
+      final (callStatus, _, _) = await post(
+        headers: {...headers(callTool), 'Mcp-Name': 'test/adds-tool'},
+        json: body(callTool, params: {Keys.name: 'test/adds-tool'}),
+      );
+      expect(callStatus, 200);
+      await pumpEventQueue(times: 20);
+      final messages = events(listen.chunks.toString());
+      expect(messages, hasLength(2));
+      expect(messages[1][Keys.method], ToolListChangedNotification.methodName);
+      expect(messages[1][Keys.params], {
+        Keys.meta: {Keys.subscriptionIdMeta: 'tools-bit'},
+      });
+      await listen.server.shutdown();
+      await listen.done.future;
+    });
+
+    test(
+      'a prompts listChanged advertisement reaches a listen stream',
+      () async {
+        serverFactory = _EquippedServer.new;
+        final (status, _, text) = await post(
+          headers: headers(DiscoverRequest.methodName),
+          json: body(DiscoverRequest.methodName),
+        );
+        expect(status, 200);
+        final capabilities =
+            (decode(text)[Keys.result] as Map<String, Object?>)[Keys
+                    .capabilities]
+                as Map<String, Object?>;
+        expect(
+          (capabilities['prompts'] as Map<String, Object?>)[Keys.listChanged],
+          isTrue,
+        );
+
+        final listen = await openListen(
+          filter: {Keys.promptsListChanged: true},
+          id: 'prompts-bit',
+        );
+        final (callStatus, _, _) = await post(
+          headers: {...headers(callTool), 'Mcp-Name': 'test/adds-prompt'},
+          json: body(callTool, params: {Keys.name: 'test/adds-prompt'}),
+        );
+        expect(callStatus, 200);
+        await pumpEventQueue(times: 20);
+        final messages = events(listen.chunks.toString());
+        expect(messages, hasLength(2));
+        expect(
+          messages[1][Keys.method],
+          PromptListChangedNotification.methodName,
+        );
+        expect(messages[1][Keys.params], {
+          Keys.meta: {Keys.subscriptionIdMeta: 'prompts-bit'},
+        });
+        await listen.server.shutdown();
+        await listen.done.future;
+      },
+    );
+
+    test(
+      'a resources listChanged advertisement reaches a listen stream',
+      () async {
+        serverFactory = _EquippedServer.new;
+        final (status, _, text) = await post(
+          headers: headers(DiscoverRequest.methodName),
+          json: body(DiscoverRequest.methodName),
+        );
+        expect(status, 200);
+        final capabilities =
+            (decode(text)[Keys.result] as Map<String, Object?>)[Keys
+                    .capabilities]
+                as Map<String, Object?>;
+        expect(
+          (capabilities['resources'] as Map<String, Object?>)[Keys.listChanged],
+          isTrue,
+        );
+
+        final listen = await openListen(
+          filter: {Keys.resourcesListChanged: true},
+          id: 'resources-list-bit',
+        );
+        final (callStatus, _, _) = await post(
+          headers: {
+            ...headers(callTool),
+            'Mcp-Name': 'test/emits-resource-list-change',
+          },
+          json: body(
+            callTool,
+            params: {Keys.name: 'test/emits-resource-list-change'},
+          ),
+        );
+        expect(callStatus, 200);
+        await pumpEventQueue(times: 20);
+        final messages = events(listen.chunks.toString());
+        expect(messages, hasLength(2));
+        expect(
+          messages[1][Keys.method],
+          ResourceListChangedNotification.methodName,
+        );
+        expect(messages[1][Keys.params], {
+          Keys.meta: {Keys.subscriptionIdMeta: 'resources-list-bit'},
+        });
+        await listen.server.shutdown();
+        await listen.done.future;
+      },
+    );
+
+    test(
+      'a resources subscribe advertisement reaches a listen stream',
+      () async {
+        serverFactory = _EquippedServer.new;
+        final (status, _, text) = await post(
+          headers: headers(DiscoverRequest.methodName),
+          json: body(DiscoverRequest.methodName),
+        );
+        expect(status, 200);
+        final capabilities =
+            (decode(text)[Keys.result] as Map<String, Object?>)[Keys
+                    .capabilities]
+                as Map<String, Object?>;
+        expect(
+          (capabilities['resources'] as Map<String, Object?>)[Keys.subscribe],
+          isTrue,
+        );
+
+        final listen = await openListen(
+          filter: {
+            Keys.resourceSubscriptions: ['file:///a'],
+          },
+          id: 'resources-sub-bit',
+        );
+        final (callStatus, _, _) = await post(
+          headers: {...headers(callTool), 'Mcp-Name': 'test/updates-resource'},
+          json: body(callTool, params: {Keys.name: 'test/updates-resource'}),
+        );
+        expect(callStatus, 200);
+        await pumpEventQueue(times: 20);
+        final messages = events(listen.chunks.toString());
+        expect(messages, hasLength(2));
+        expect(
+          messages[1][Keys.method],
+          ResourceUpdatedNotification.methodName,
+        );
+        expect(messages[1][Keys.params], {
+          Keys.uri: 'file:///a',
+          Keys.meta: {Keys.subscriptionIdMeta: 'resources-sub-bit'},
+        });
+        await listen.server.shutdown();
+        await listen.done.future;
+      },
+    );
 
     test('keeps advertised capabilities separate from server state', () async {
       late _EquippedServer server;
@@ -2908,5 +3116,47 @@ base class _EquippedServer extends MCPServer
           name: 'equipped test server',
           version: '0.1.0',
         ),
+      ) {
+    registerTool(Tool(name: 'test/adds-tool', inputSchema: ObjectSchema()), (
+      _,
+    ) {
+      registerTool(
+        Tool(name: 'test/added-while-answering', inputSchema: ObjectSchema()),
+        (_) => CallToolResult(content: [TextContent(text: 'added')]),
       );
+      return CallToolResult(content: [TextContent(text: 'added')]);
+    });
+    registerTool(Tool(name: 'test/adds-prompt', inputSchema: ObjectSchema()), (
+      _,
+    ) {
+      addPrompt(
+        Prompt(name: 'added-while-answering'),
+        (_) => GetPromptResult(messages: []),
+      );
+      return CallToolResult(content: [TextContent(text: 'added')]);
+    });
+    registerTool(
+      Tool(
+        name: 'test/emits-resource-list-change',
+        inputSchema: ObjectSchema(),
+      ),
+      (_) {
+        sendNotification(
+          ResourceListChangedNotification.methodName,
+          ResourceListChangedNotification(),
+        );
+        return CallToolResult(content: [TextContent(text: 'changed')]);
+      },
+    );
+    registerTool(
+      Tool(name: 'test/updates-resource', inputSchema: ObjectSchema()),
+      (_) {
+        sendNotification(
+          ResourceUpdatedNotification.methodName,
+          ResourceUpdatedNotification(uri: 'file:///a'),
+        );
+        return CallToolResult(content: [TextContent(text: 'updated')]);
+      },
+    );
+  }
 }
