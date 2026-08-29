@@ -40,7 +40,8 @@ export 'src/utils/sse.dart' show sseMessageStream;
 /// [sseMessageStream]. A failed POST is a JSON-RPC error for that request id.
 /// A `202` on a notification is not an inbound message. Valid `x-mcp-header`
 /// annotations from `tools/list` are mirrored on later `tools/call` requests;
-/// invalid tool definitions are dropped. Does not send `initialize`.
+/// invalid tool definitions are dropped. Does not send `initialize`. A 400
+/// JSON-RPC -32022 retries once when `supported` lists this channel's version.
 StreamChannel<Map<String, Object?>> streamableHttpClientChannel(
   Uri uri, {
   required ProtocolVersion protocolVersion,
@@ -90,6 +91,42 @@ Stream<Map<String, Object?>> _sendStreamableHttpMessage(
   Implementation? clientInfo,
   _StreamableHttpClientState state,
 ) async* {
+  var versionToSend = protocolVersion;
+  var retried = false;
+  while (true) {
+    final retry = <ProtocolVersion>[];
+    yield* _postStreamableHttpOnce(
+      httpClient,
+      uri,
+      message,
+      versionToSend,
+      clientCapabilities,
+      clientInfo,
+      state,
+      retried: retried,
+      retry: retry,
+    );
+    if (retry.isEmpty) return;
+    retried = true;
+    versionToSend = retry.single;
+  }
+}
+
+/// POSTs [message] at [protocolVersion] and emits each response message.
+///
+/// A 400 -32022 that names [protocolVersion] writes it to [retry] when
+/// [retried] is false, and emits nothing.
+Stream<Map<String, Object?>> _postStreamableHttpOnce(
+  HttpClient httpClient,
+  Uri uri,
+  Map<String, Object?> message,
+  ProtocolVersion protocolVersion,
+  ClientCapabilities clientCapabilities,
+  Implementation? clientInfo,
+  _StreamableHttpClientState state, {
+  required bool retried,
+  required List<ProtocolVersion> retry,
+}) async* {
   try {
     final object = JsonRpc2Object.fromMap(message);
     final method = object.method;
@@ -171,6 +208,17 @@ Stream<Map<String, Object?>> _sendStreamableHttpMessage(
       final decoded =
           (jsonDecode(await utf8.decodeStream(response)) as Map)
               .cast<String, Object?>();
+      if (!retried) {
+        final retryVersion = _retryProtocolVersion(
+          response.statusCode,
+          decoded,
+          protocolVersion,
+        );
+        if (retryVersion != null) {
+          retry.add(retryVersion);
+          return;
+        }
+      }
       yield state.recordIncoming(decoded);
       return;
     }
@@ -1065,6 +1113,31 @@ const _eventStreamMimeType = 'text/event-stream';
 /// the request-scoped protocol this transport speaks was introduced later, so
 /// the two sets are deliberately separate.
 const _supportedVersions = {ProtocolVersion.v2026_07_28};
+
+/// The version to retry a 400 unsupported-protocol-version error with, or null.
+///
+/// Returns [speakable] when `error.data.supported` lists it. The client
+/// retries at most once; the caller tracks that.
+ProtocolVersion? _retryProtocolVersion(
+  int statusCode,
+  Map<String, Object?> decoded,
+  ProtocolVersion speakable,
+) {
+  if (statusCode != HttpStatus.badRequest) return null;
+  final error = decoded[Keys.error];
+  if (error is! Map<String, Object?>) return null;
+  if (error[Keys.code] != McpErrorCodes.unsupportedProtocolVersion) {
+    return null;
+  }
+  final data = error[Keys.data];
+  if (data is! Map<String, Object?>) return null;
+  final supported = data[Keys.supported];
+  if (supported is! List) return null;
+  for (final item in supported) {
+    if (item == speakable.versionString) return speakable;
+  }
+  return null;
+}
 
 /// Whether any revision of the protocol defines [method].
 ///

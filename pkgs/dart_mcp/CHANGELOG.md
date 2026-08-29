@@ -265,7 +265,8 @@
   params or arguments are not a string-keyed map is a request error. Valid
   `x-mcp-header` annotations from `tools/list` are mirrored on later
   `tools/call` requests; invalid tool definitions are dropped. The helper
-  speaks only 2026-07-28 and does not negotiate a version.
+  speaks only 2026-07-28. A 400 with `UnsupportedProtocolVersionError`
+  retries once when `supported` lists that version.
 - Serve `server/discover` from `MCPServer.discover`, which answers with the
   request-scoped protocol versions this package implements, the capabilities
   `MCPServer.initialize` registered, and the instructions the server was given.
