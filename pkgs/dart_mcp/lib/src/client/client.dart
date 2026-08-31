@@ -120,11 +120,17 @@ final class _SubscriptionRoute {
   /// with an error if the subscription ends before one arrives.
   final acknowledged = Completer<SubscriptionsAcknowledgedNotification>();
 
-  final toolListChanged = StreamController<ToolListChangedNotification>();
-  final promptListChanged = StreamController<PromptListChangedNotification>();
+  // Broadcast, like every other notification stream on [ServerConnection]:
+  // a plain controller's `close()` future never completes without a
+  // listener, and nothing here guarantees one for every stream this opens.
+  final toolListChanged =
+      StreamController<ToolListChangedNotification>.broadcast();
+  final promptListChanged =
+      StreamController<PromptListChangedNotification>.broadcast();
   final resourceListChanged =
-      StreamController<ResourceListChangedNotification>();
-  final resourceUpdated = StreamController<ResourceUpdatedNotification>();
+      StreamController<ResourceListChangedNotification>.broadcast();
+  final resourceUpdated =
+      StreamController<ResourceUpdatedNotification>.broadcast();
 
   /// The notification types the server agreed to send, once [acknowledged]
   /// completes. `null` before then, so nothing is delivered on a stream the
