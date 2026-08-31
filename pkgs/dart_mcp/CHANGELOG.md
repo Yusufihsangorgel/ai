@@ -281,6 +281,20 @@
 - Add `sseMessageStream`, decoding the `message` events of an SSE response
   into JSON objects. Undecodable data becomes an error event without ending
   the stream, though `await for` stops on the first one.
+- Add `streamableHttpClientChannel`, posting each client message as a
+  Streamable HTTP request and emitting JSON or SSE responses on the channel.
+  JSON replies are decoded with `jsonDecode` and SSE replies with
+  `sseMessageStream`. A failed POST is an error for that request id, or an
+  error on the channel when it carried a notification. A response stream that
+  ends without answering counts the same way, and so does a notification
+  answered with a body. A `tools/call` whose params or arguments are not a
+  string-keyed map is a request error. Valid `x-mcp-header` annotations from
+  `tools/list` are mirrored on later `tools/call` requests, including an
+  integer written as a decimal, and a value the tool cannot carry fails the
+  request instead of going out without its header. Invalid tool definitions
+  are dropped, and a `tools/list` page with no cursor replaces what earlier
+  pages taught. The helper speaks only 2026-07-28 and does not negotiate a
+  version.
 - Serve `server/discover` from `MCPServer.discover`, which answers with the
   request-scoped protocol versions this package implements, the capabilities
   `MCPServer.initialize` registered, and the instructions the server was given.
@@ -309,7 +323,7 @@
   against the required headers and `_meta` envelope, then dispatched to a
   fresh server instance via `handleRequestScopedMessage`. See
   `example/streamable_http_server.dart`. Does not add the legacy session
-  routes or an HTTP client; those land as separate changes.
+  routes; those land as a separate change.
 - Add `ProtocolVersion.addedMethods` and `.removedMethods`, listing what each
   revision of the protocol introduced and took out, and
   `ProtocolVersion.methodIsValid`, which walks back from a revision to answer
