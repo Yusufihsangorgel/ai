@@ -206,8 +206,18 @@ base mixin ResourcesSupport on MCPServer {
   /// requires if no resource or template answers the URI, carrying that URI as
   /// `data.uri`. Earlier revisions asked for `-32002` here, which this package
   /// has never sent.
+  ///
+  /// On 2026-07-28 this runs [request] with the input-required scope
+  /// [ElicitationRequestSupport.elicit], [MCPServer.listRoots] and
+  /// [MCPServer.createMessage] read: a call one of the three makes with no
+  /// answer yet ends the request
+  /// with an [InputRequiredResult] instead of the [ReadResourceResult] the
+  /// resource itself returns. See [MCPServer._withInputRequiredScope].
   @mustCallSuper
-  FutureOr<ReadResourceResponse> readResource(
+  FutureOr<ReadResourceResponse> readResource(ReadResourceRequest request) =>
+      _withInputRequiredScope(request, () => _dispatchReadResource(request));
+
+  Future<ReadResourceResponse> _dispatchReadResource(
     ReadResourceRequest request,
   ) async {
     final impl = _resourceImpls[request.uri];

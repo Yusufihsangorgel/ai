@@ -4,7 +4,6 @@
 
 import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/src/utils/constants.dart';
-import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:test/test.dart';
 
 final class _RequestingServer extends MCPServer
@@ -78,46 +77,68 @@ void main() {
     },
   );
 
-  test('2026-07-28 rejects sampling before capability checks', () async {
-    for (final capabilities in [
-      ClientCapabilities(),
-      ClientCapabilities(sampling: {}),
-    ]) {
+  test(
+    '2026-07-28 still refuses sampling with no sampling capability',
+    () async {
       final result = await _callTool(
         'test/sample',
-        capabilities,
+        ClientCapabilities(),
         protocolVersion: ProtocolVersion.v2026_07_28,
       );
 
       final error = result![Keys.error] as Map<String, Object?>;
-      expect(error[Keys.code], error_code.INTERNAL_ERROR);
-      expect(
-        error[Keys.message],
-        contains(
-          '2026-07-28 does not have '
-          '${CreateMessageRequest.methodName}',
-        ),
-      );
-    }
+      expect(error[Keys.code], McpErrorCodes.missingRequiredClientCapability);
+      final data = error[Keys.data] as Map;
+      expect(data[Keys.requiredCapabilities], {
+        Keys.sampling: <String, Object?>{},
+      });
+    },
+  );
+
+  test('2026-07-28 still refuses roots with no roots capability', () async {
+    final result = await _callTool(
+      'test/roots',
+      ClientCapabilities(),
+      protocolVersion: ProtocolVersion.v2026_07_28,
+    );
+
+    final error = result![Keys.error] as Map<String, Object?>;
+    expect(error[Keys.code], McpErrorCodes.missingRequiredClientCapability);
+    final data = error[Keys.data] as Map;
+    expect(data[Keys.requiredCapabilities], {Keys.roots: <String, Object?>{}});
   });
 
-  test('2026-07-28 rejects roots before capability checks', () async {
-    for (final capabilities in [
-      ClientCapabilities(),
-      ClientCapabilities(roots: RootsCapabilities()),
-    ]) {
-      final result = await _callTool(
-        'test/roots',
-        capabilities,
-        protocolVersion: ProtocolVersion.v2026_07_28,
-      );
+  test('2026-07-28 asks sampling by ending the tool call with an '
+      'input-required result', () async {
+    final result = await _callTool(
+      'test/sample',
+      ClientCapabilities(sampling: {}),
+      protocolVersion: ProtocolVersion.v2026_07_28,
+    );
 
-      final error = result![Keys.error] as Map<String, Object?>;
-      expect(error[Keys.code], error_code.INTERNAL_ERROR);
-      expect(
-        error[Keys.message],
-        contains('2026-07-28 does not have ${ListRootsRequest.methodName}'),
-      );
-    }
+    expect(result![Keys.error], isNull);
+    final value = result[Keys.result] as Map<String, Object?>;
+    expect(value[Keys.resultType], 'input_required');
+    final requests = value[Keys.inputRequests] as Map<String, Object?>;
+    expect(requests.keys, ['0']);
+    final entry = requests['0'] as Map<String, Object?>;
+    expect(entry[Keys.method], CreateMessageRequest.methodName);
+  });
+
+  test('2026-07-28 asks roots by ending the tool call with an input-required '
+      'result', () async {
+    final result = await _callTool(
+      'test/roots',
+      ClientCapabilities(roots: RootsCapabilities()),
+      protocolVersion: ProtocolVersion.v2026_07_28,
+    );
+
+    expect(result![Keys.error], isNull);
+    final value = result[Keys.result] as Map<String, Object?>;
+    expect(value[Keys.resultType], 'input_required');
+    final requests = value[Keys.inputRequests] as Map<String, Object?>;
+    expect(requests.keys, ['0']);
+    final entry = requests['0'] as Map<String, Object?>;
+    expect(entry[Keys.method], ListRootsRequest.methodName);
   });
 }

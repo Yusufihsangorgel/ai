@@ -126,6 +126,14 @@
     `updateResource` parameters taking those handlers widen with them.
     `Result.isInputRequired` tells them apart. Nothing on the 2025-11-25 path
     moves, since the completed results implement the new supertypes.
+  - On 2026-07-28, `ElicitationRequestSupport.elicit`, `MCPServer.listRoots`
+    and `MCPServer.createMessage` no longer just throw from inside a
+    `tools/call`, `prompts/get` or `resources/read` handler: the first call
+    ends that exchange with the `InputRequiredResult` naming it, and a retry
+    which already answers it, at the position that call holds among every
+    such call the handler makes, returns the answer instead. Calling one of
+    the three from anywhere else on that revision still throws, now naming
+    the three requests it could have carried an answer back on.
 - Add `supportsFormElicitation` and `supportsUrlElicitation` for a server to
   ask before it sends. An empty `elicitation` object still means form, the way
   `elicitation` read before the split.

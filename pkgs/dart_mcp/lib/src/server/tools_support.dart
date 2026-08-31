@@ -114,8 +114,18 @@ base mixin ToolsSupport on MCPServer {
       ListToolsResult(tools: [for (var tool in _registeredTools.values) tool]);
 
   /// Invoked when one of the registered tools is called.
+  ///
+  /// On 2026-07-28 this runs [request] with the input-required scope
+  /// [ElicitationRequestSupport.elicit], [MCPServer.listRoots] and
+  /// [MCPServer.createMessage] read: a call one of the three makes with no
+  /// answer yet ends the tool
+  /// call with an [InputRequiredResult] instead of the [CallToolResult] the
+  /// tool itself returns. See [MCPServer._withInputRequiredScope].
   @mustCallSuper
-  Future<CallToolResponse> callTool(CallToolRequest request) async {
+  Future<CallToolResponse> callTool(CallToolRequest request) =>
+      _withInputRequiredScope(request, () => _dispatchCallTool(request));
+
+  Future<CallToolResponse> _dispatchCallTool(CallToolRequest request) async {
     final impl = _registeredToolImpls[request.name];
     if (impl == null) {
       return CallToolResult(
@@ -129,9 +139,12 @@ base mixin ToolsSupport on MCPServer {
     try {
       return await impl(request);
     } catch (e, s) {
-      if (e is RpcException) {
-        // These exceptions should bubble up as proper RPC errors and not be
-        // converted into failed tool call responses.
+      if (e is RpcException || e is _AwaitingInput) {
+        // An RpcException should bubble up as a proper RPC error and not be
+        // converted into a failed tool call response. An _AwaitingInput is
+        // internal to [MCPServer._withInputRequiredScope], which is what
+        // called this and is waiting to catch it; it must reach that catch
+        // unconverted, never a tool's own result or a client.
         rethrow;
       }
       return CallToolResult(

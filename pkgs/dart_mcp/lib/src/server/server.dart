@@ -97,6 +97,18 @@ abstract base class MCPServer extends MCPBase {
   /// Only assigned after [initialize] has been called.
   late ClientCapabilities clientCapabilities;
 
+  /// Which of the [InputRequest]s [ElicitationRequestSupport.elicit],
+  /// [listRoots] and [createMessage]
+  /// ask for during the `tools/call`, `prompts/get` or `resources/read`
+  /// currently dispatching already has an answer, on 2026-07-28.
+  ///
+  /// `null` outside of one of those three, including everywhere on an
+  /// earlier revision. [_withInputRequiredScope] sets this before running a
+  /// handler and restores the previous value once it returns, so a handler
+  /// which calls another one of these three, directly or through a nested
+  /// dispatch, does not lose track of its own scope.
+  _InputRequiredScope? _inputRequiredScope;
+
   /// The client implementation information provided during initialization.
   ///
   /// `null` until [initialize] has been called, and remains `null` when the
@@ -301,11 +313,28 @@ abstract base class MCPServer extends MCPBase {
   /// capability, and throws an [RpcException] with
   /// [McpErrorCodes.missingRequiredClientCapability] when it has not, naming
   /// the capability the client is missing under `data.requiredCapabilities`.
+  ///
+  /// On 2026-07-28, from inside a `tools/call`, `prompts/get` or
+  /// `resources/read` handler, this asks by ending that exchange with an
+  /// [InputRequiredResult] instead: the first call the handler makes throws
+  /// internally, which [ToolsSupport.callTool], [PromptsSupport.getPrompt]
+  /// and [ResourcesSupport.readResource] catch, so nothing here blocks. A
+  /// retry that already answers this call, at the position it holds among
+  /// every [ElicitationRequestSupport.elicit], [listRoots] and
+  /// [createMessage] call the handler makes, returns that answer instead of
+  /// asking again. Calling this from anywhere else on that revision throws an
+  /// [RpcException], since nothing outside those three requests can carry an
+  /// [InputRequiredResult] back.
   Future<ListRootsResult> listRoots([ListRootsRequest? request]) async {
-    _rejectRemovedMethod(ListRootsRequest.methodName, protocolVersion);
     if (!supportsRoots) {
       throw _missingRoots;
     }
+    if (protocolVersion >= ProtocolVersion.v2026_07_28) {
+      return _resolveInputRequired(
+        InputRequest.listRoots(request ?? ListRootsRequest()),
+      );
+    }
+    _rejectRemovedMethod(ListRootsRequest.methodName, protocolVersion);
     return sendRequest(ListRootsRequest.methodName, request);
   }
 
@@ -321,15 +350,141 @@ abstract base class MCPServer extends MCPBase {
   /// capability, and throws an [RpcException] with
   /// [McpErrorCodes.missingRequiredClientCapability] when it has not, naming
   /// the capability the client is missing under `data.requiredCapabilities`.
+  ///
+  /// On 2026-07-28 this asks the same way [listRoots] does: from inside a
+  /// `tools/call`, `prompts/get` or `resources/read` handler it ends that
+  /// exchange with an [InputRequiredResult], and a retry that already
+  /// answers it returns the answer instead of asking again.
   Future<CreateMessageResult> createMessage(
     CreateMessageRequest request,
   ) async {
-    _rejectRemovedMethod(CreateMessageRequest.methodName, protocolVersion);
     if (!supportsSampling) {
       throw _missingSampling;
     }
+    if (protocolVersion >= ProtocolVersion.v2026_07_28) {
+      return _resolveInputRequired(InputRequest.sample(request));
+    }
+    _rejectRemovedMethod(CreateMessageRequest.methodName, protocolVersion);
     return sendRequest(CreateMessageRequest.methodName, request);
   }
+
+  /// Runs a `tools/call`, `prompts/get` or `resources/read` [handler] for
+  /// [request] with [_inputRequiredScope] set, on 2026-07-28.
+  ///
+  /// [ToolsSupport.callTool], [PromptsSupport.getPrompt] and
+  /// [ResourcesSupport.readResource] call this around their entire handler
+  /// dispatch, including argument validation and any wrapping they do of
+  /// their own, so [ElicitationRequestSupport.elicit], [listRoots] and
+  /// [createMessage] find the scope no matter how deep in [handler] they are
+  /// called from.
+  ///
+  /// Catches the [_AwaitingInput] one of those three throws when the current
+  /// [_InputRequiredScope] has no answer yet for the call it names, and turns
+  /// it into the [InputRequiredResult] naming that call as the sole entry of
+  /// [InputRequiredResult.inputRequests]. A caller that also catches broader
+  /// exceptions around [handler], the way [ToolsSupport.callTool] turns an
+  /// unexpected one into a failed [CallToolResult], must let this one through
+  /// unchanged first.
+  ///
+  /// Runs [handler] with no scope set on an earlier revision, where none of
+  /// [request], [InputRequiredResult] or the three requests it names apply.
+  Future<R> _withInputRequiredScope<R extends Result>(
+    WithInputResponses request,
+    Future<R> Function() handler,
+  ) async {
+    if (protocolVersion < ProtocolVersion.v2026_07_28) return handler();
+    final previousScope = _inputRequiredScope;
+    _inputRequiredScope = _InputRequiredScope(
+      request.inputResponses ?? const {},
+    );
+    try {
+      return await handler();
+    } on _AwaitingInput catch (awaiting) {
+      return InputRequiredResult(
+            inputRequests: {awaiting.key: awaiting.request},
+          )
+          as R;
+    } finally {
+      _inputRequiredScope = previousScope;
+    }
+  }
+
+  /// Answers [request] from the current [_InputRequiredScope], or signals
+  /// that it needs an answer the caller does not have yet.
+  ///
+  /// Called only from [ElicitationRequestSupport.elicit], [listRoots] and
+  /// [createMessage], and only once [protocolVersion] is 2026-07-28 or later.
+  ///
+  /// Throws an [RpcException] when nothing is dispatching a `tools/call`,
+  /// `prompts/get` or `resources/read` right now: [_withInputRequiredScope]
+  /// is what sets [_inputRequiredScope], and it is the only revision where
+  /// one of those three carries an [InputRequiredResult], so calling this
+  /// from anywhere else leaves no way to send [request] to the client.
+  T _resolveInputRequired<T extends Result>(InputRequest request) {
+    final scope = _inputRequiredScope;
+    if (scope == null) {
+      throw RpcException(
+        error_code.INTERNAL_ERROR,
+        'Called ${request.method} outside of a '
+        '${CallToolRequest.methodName}, ${GetPromptRequest.methodName}, or '
+        '${ReadResourceRequest.methodName} handler. Protocol version '
+        '${protocolVersion.versionString} only carries ${request.method} in '
+        'an InputRequiredResult on those three, so there is nowhere to send '
+        'it from here.',
+      );
+    }
+    return scope._resolve<T>(request);
+  }
+}
+
+/// Tracks, across the calls a single `tools/call`, `prompts/get` or
+/// `resources/read` handler makes to [ElicitationRequestSupport.elicit],
+/// [MCPServer.listRoots] and [MCPServer.createMessage], which the client
+/// already answered.
+///
+/// A retry of one of those three carries the answers the client gave under
+/// [WithInputResponses.inputResponses], keyed the way the
+/// [InputRequiredResult] that asked for them named its
+/// [InputRequiredResult.inputRequests]. This class hands them back in the
+/// same order a handler which runs the same way up to the point it stopped
+/// at asks for them, so it needs no state of the handler's own to line an
+/// answer up with the call it belongs to.
+class _InputRequiredScope {
+  _InputRequiredScope(this._answers);
+
+  /// The client's answers on this retry, empty on a first attempt.
+  final Map<String, Result> _answers;
+
+  /// How many of [ElicitationRequestSupport.elicit], [MCPServer.listRoots]
+  /// and [MCPServer.createMessage] this scope has answered or signalled for
+  /// so far, and so the key the next one asks under.
+  int _nextKey = 0;
+
+  /// The client's answer to [request], or throws [_AwaitingInput] naming it
+  /// under a fresh key when [_answers] holds none yet.
+  T _resolve<T extends Result>(InputRequest request) {
+    final key = '${_nextKey++}';
+    final answer = _answers[key];
+    if (answer == null) throw _AwaitingInput(key, request);
+    return answer as T;
+  }
+}
+
+/// Thrown by [_InputRequiredScope._resolve] when a call has no answer yet.
+///
+/// Only [MCPServer._withInputRequiredScope] catches this. It must never reach
+/// a handler's own `catch`, a client, or a log: [ToolsSupport.callTool]'s
+/// broad catch around handler dispatch rethrows it for that reason, the way
+/// it already does for [RpcException].
+class _AwaitingInput implements Exception {
+  _AwaitingInput(this.key, this.request);
+
+  /// The key [request] is signalled under, and the one an answer for it
+  /// arrives back under on a retry.
+  final String key;
+
+  /// The request the client has not answered yet.
+  final InputRequest request;
 }
 
 /// Refuses to send [method] when [ProtocolVersion.methodIsValid] says

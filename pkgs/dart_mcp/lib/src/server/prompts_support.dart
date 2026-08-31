@@ -37,13 +37,23 @@ base mixin PromptsSupport on MCPServer {
       ListPromptsResult(prompts: _prompts.values.toList());
 
   /// Gets the response for a given prompt.
+  ///
+  /// On 2026-07-28 this runs [request] with the input-required scope
+  /// [ElicitationRequestSupport.elicit], [MCPServer.listRoots] and
+  /// [MCPServer.createMessage] read: a call one of the three makes with no
+  /// answer yet ends the request
+  /// with an [InputRequiredResult] instead of the [GetPromptResult] the
+  /// prompt itself returns. See [MCPServer._withInputRequiredScope].
   @mustCallSuper
-  FutureOr<GetPromptResponse> getPrompt(GetPromptRequest request) {
+  FutureOr<GetPromptResponse> getPrompt(GetPromptRequest request) =>
+      _withInputRequiredScope(request, () => _dispatchGetPrompt(request));
+
+  Future<GetPromptResponse> _dispatchGetPrompt(GetPromptRequest request) async {
     final impl = _promptImpls[request.name];
     if (impl == null) {
       throw ArgumentError.value(request.name, 'name', 'Prompt not found');
     }
-    return impl(request);
+    return await impl(request);
   }
 
   /// Adds a prompt and notifies clients that the list has changed.

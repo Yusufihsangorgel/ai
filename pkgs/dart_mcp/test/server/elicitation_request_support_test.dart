@@ -124,39 +124,75 @@ void main() {
     );
   });
 
-  test('2026-07-28 rejects both modes before capability checks', () async {
-    for (final (tool, capabilities) in [
-      ('test/ask', ClientCapabilities()),
-      (
-        'test/ask',
-        ClientCapabilities(elicitation: ElicitationCapability(form: {})),
-      ),
-      ('test/send', ClientCapabilities()),
-      (
-        'test/send',
-        ClientCapabilities(elicitation: ElicitationCapability(url: {})),
-      ),
-      ('test/no-mode', ClientCapabilities()),
-      ('test/unknown', ClientCapabilities()),
+  test('2026-07-28 keeps requiring the capability the mode needs', () async {
+    for (final (tool, mode) in [
+      ('test/ask', Keys.form),
+      ('test/send', Keys.url),
+      ('test/no-mode', Keys.form),
     ]) {
       final result = await _call(
         tool,
-        capabilities,
+        ClientCapabilities(),
         protocolVersion: ProtocolVersion.v2026_07_28,
       );
 
-      expect(_errorCode(result!), error_code.INTERNAL_ERROR);
-      expect(
-        (result[Keys.error] as Map<String, Object?>)[Keys.message],
-        allOf(
-          contains(
-            '2026-07-28 does not have '
-            '${ElicitRequest.methodName}',
-          ),
-          contains('InputRequiredResult'),
-        ),
-      );
+      expect(_requiredCapabilities(result!), {
+        Keys.elicitation: {mode: <String, Object?>{}},
+      }, reason: tool);
     }
+  });
+
+  test(
+    '2026-07-28 asks by ending the tool call with an input-required result',
+    () async {
+      final formResult = await _call(
+        'test/ask',
+        ClientCapabilities(elicitation: ElicitationCapability(form: {})),
+        protocolVersion: ProtocolVersion.v2026_07_28,
+      );
+
+      expect(formResult![Keys.error], isNull);
+      final formValue = formResult[Keys.result] as Map<String, Object?>;
+      expect(formValue[Keys.resultType], 'input_required');
+      final formRequests =
+          formValue[Keys.inputRequests] as Map<String, Object?>;
+      expect(formRequests.keys, ['0']);
+      final formEntry = formRequests['0'] as Map<String, Object?>;
+      expect(formEntry[Keys.method], ElicitRequest.methodName);
+      final formParams = formEntry[Keys.params] as Map<String, Object?>;
+      expect(formParams[Keys.message], 'need input');
+
+      final urlResult = await _call(
+        'test/send',
+        ClientCapabilities(elicitation: ElicitationCapability(url: {})),
+        protocolVersion: ProtocolVersion.v2026_07_28,
+      );
+
+      expect(urlResult![Keys.error], isNull);
+      final urlValue = urlResult[Keys.result] as Map<String, Object?>;
+      expect(urlValue[Keys.resultType], 'input_required');
+      final urlRequests = urlValue[Keys.inputRequests] as Map<String, Object?>;
+      expect(urlRequests.keys, ['0']);
+      final urlEntry = urlRequests['0'] as Map<String, Object?>;
+      expect(urlEntry[Keys.method], ElicitRequest.methodName);
+      final urlParams = urlEntry[Keys.params] as Map<String, Object?>;
+      expect(urlParams[Keys.message], 'sign in');
+    },
+  );
+
+  test('2026-07-28 rejects an unrecognized mode before touching capability or '
+      'scope', () async {
+    final result = await _call(
+      'test/unknown',
+      ClientCapabilities(),
+      protocolVersion: ProtocolVersion.v2026_07_28,
+    );
+
+    expect(_errorCode(result!), error_code.INVALID_PARAMS);
+    expect(
+      (result[Keys.error] as Map<String, Object?>)[Keys.message],
+      contains('"voice"'),
+    );
   });
 
   test('a revision before 2025-06-18 rejects elicitation too', () async {
