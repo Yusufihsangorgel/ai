@@ -295,6 +295,20 @@
   are dropped, and a `tools/list` page with no cursor replaces what earlier
   pages taught. The helper speaks only 2026-07-28 and does not negotiate a
   version.
+- Add `ServerConnection.listen`, the client side of `subscriptions/listen`,
+  see https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
+  It resolves once the server's acknowledgement arrives, with the
+  notification streams it granted and a `result` future for the subscription's
+  eventual close. `package:json_rpc_2` assigns the request its id and never
+  hands it back, and that id is also the subscription's, so `MCPBase` gained
+  `sendRequestWithId` to report it as the request goes out on the wire. The
+  existing `toolListChanged`, `promptListChanged`, `resourceListChanged` and
+  `resourceUpdated` streams still fire for every notification regardless of
+  subscription, and the new `subscriptionAcknowledged` stream does the same
+  for acknowledgements. A transport close before the acknowledgement or the
+  result arrives fails the corresponding future and closes the subscription's
+  streams. Cancelling a subscription from the client side is not yet
+  implemented.
 - Serve `server/discover` from `MCPServer.discover`, which answers with the
   request-scoped protocol versions this package implements, the capabilities
   `MCPServer.initialize` registered, and the instructions the server was given.
