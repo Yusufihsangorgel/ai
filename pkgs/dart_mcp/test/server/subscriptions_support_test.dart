@@ -28,8 +28,7 @@ void main() {
   setUp(() async {
     acknowledgements.clear();
     environment = TestEnvironment(TestMCPClient(), _SubscribingServer.new);
-    environment.serverConnection.registerNotificationHandler(
-      SubscriptionsAcknowledgedNotification.methodName,
+    environment.serverConnection.subscriptionAcknowledged.listen(
       acknowledgements.add,
     );
     // The 2026-07-28 revision took the `initialize` handshake out, so a

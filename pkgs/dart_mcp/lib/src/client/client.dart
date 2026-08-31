@@ -270,6 +270,16 @@ base class ServerConnection extends MCPBase {
   final _elicitationCompleteController =
       StreamController<ElicitationCompleteNotification>.broadcast();
 
+  /// Emits an event any time the server acknowledges a `subscriptions/listen`
+  /// request, whether or not this connection opened it through [listen].
+  ///
+  /// This is a broadcast stream, events are not buffered and only future events
+  /// are given.
+  Stream<SubscriptionsAcknowledgedNotification> get subscriptionAcknowledged =>
+      _subscriptionAcknowledgedController.stream;
+  final _subscriptionAcknowledgedController =
+      StreamController<SubscriptionsAcknowledgedNotification>.broadcast();
+
   /// Open [listen] subscriptions, by the JSON-RPC id that names them.
   final _subscriptions = <RequestId, _SubscriptionRoute>{};
 
@@ -419,7 +429,10 @@ base class ServerConnection extends MCPBase {
   /// open under that id.
   void _handleSubscriptionAcknowledged(
     SubscriptionsAcknowledgedNotification notification,
-  ) => _subscriptionFor(notification)?.acknowledge(notification);
+  ) {
+    _subscriptionAcknowledgedController.add(notification);
+    _subscriptionFor(notification)?.acknowledge(notification);
+  }
 
   /// Close all connections and streams so the process can cleanly exit.
   @override
@@ -433,6 +446,7 @@ base class ServerConnection extends MCPBase {
       _resourceListChangedController.close(),
       _resourceUpdatedController.close(),
       _logController.close(),
+      _subscriptionAcknowledgedController.close(),
       for (final route in subscriptions) route.close(),
     ]);
   }
