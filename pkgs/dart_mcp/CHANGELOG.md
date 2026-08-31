@@ -4,6 +4,10 @@
   schemas built from sets or lazy iterables can be JSON encoded.
 - Split the Streamable HTTP implementation into client and server libraries
   without changing its public API.
+- Accept a multi-select enum as an elicitation property.
+  `UntitledMultiSelectEnumSchema` and `TitledMultiSelectEnumSchema` build the
+  two shapes the spec lists, and an array with `items` matching neither is
+  refused.
 - **BREAKING**:
   - `MCPBase` (including the `MCPServer.fromStreamChannel` and
     `ServerConnection.fromStreamChannel` constructors),
