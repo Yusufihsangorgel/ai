@@ -53,7 +53,11 @@ const _contextKeys = {
 /// allows, and the answers to an [InputRequiredResult] stay out entirely. A
 /// `ttlMs` past a day is clamped to a day. Without that a server could pin an
 /// answer for the life of the process, and a value large enough to overflow a
-/// [Duration] would write an entry that is already stale.
+/// [Duration] would write an entry that is already stale. A re-fetch that
+/// fails because the connection closed underneath it serves the expired
+/// entry it was replacing rather than the failure, since the spec allows
+/// serving a stale answer over none at all. The entry is not restored, so
+/// the next call re-fetches again.
 ///
 /// https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching
 final class _ClientResponseCache {
@@ -117,9 +121,23 @@ final class _ClientResponseCache {
       _updatedWhilePending[token] = <String>{};
     }
     try {
-      final result = await send();
+      final T result;
+      try {
+        result = await send();
+        // json_rpc_2 completes a pending request with a `StateError` when the
+        // connection closes underneath it (`RootsTrackingSupport.updateRoots`
+        // reads the same signal). The spec allows serving a stale answer
+        // instead of failing the call when a re-fetch cannot reach the
+        // server. A key with nothing cached still throws.
+        // ignore: avoid_catching_errors
+      } on StateError {
+        if (entry != null) return _copyMap(entry.result) as T;
+        rethrow;
+      }
       final receivedAt = _elapsed;
-      if (result == null || _pending[key] != token) return result;
+      if (result == null || _pending[key] != token) {
+        return result;
+      }
 
       final resultMap = result as Map<String, Object?>;
       final resultType = resultMap[Keys.resultType];

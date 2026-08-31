@@ -183,7 +183,11 @@
   out its URI drops every cached read. A cache belongs to one
   `ServerConnection`, so a `private` result stays inside the authorization
   context it was fetched under. An `InputRequiredResult` and the retry it asks
-  for are never cached.
+  for are never cached. A re-fetch that fails because the connection closed
+  underneath it (json_rpc_2 completes the pending request with a
+  `StateError`) serves the expired entry it was replacing instead of the
+  failure, since the spec allows a stale answer over none at all. The entry
+  is not restored, so the next call re-fetches again.
 - Add `McpErrorCodes.headerMismatch` (`-32020`),
   `.missingRequiredClientCapability` (`-32021`), and
   `.unsupportedProtocolVersion` (`-32022`), the error codes the 2026-07-28

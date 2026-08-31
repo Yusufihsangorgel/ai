@@ -683,6 +683,33 @@ void main() {
       expect(connection.cachedResponseCount, 0);
     });
 
+    test('serves the stale entry when the connection dies before a refetch '
+        'answers', () async {
+      await listTools();
+      expect(server.calls[ListToolsRequest.methodName], 1);
+      connection.elapseCachedResponses(const Duration(seconds: 61));
+
+      // A completer that never completes leaves the refetch this starts with
+      // no answer, so only closing the channel underneath it ends the call,
+      // the same way an unreachable server would.
+      server.listToolsResult = (_, _) => Completer<ListToolsResult>().future;
+      final stale = listTools();
+      await environment.serverController.close();
+
+      expect((await stale).tools.single.name, 'tool-1');
+    });
+
+    test(
+      'rethrows a connection failure when there is no entry to fall back on',
+      () async {
+        server.listToolsResult = (_, _) => Completer<ListToolsResult>().future;
+        final pending = listTools();
+        await environment.serverController.close();
+
+        await expectLater(pending, throwsA(isA<StateError>()));
+      },
+    );
+
     test('delivers a resource notification which leaves out its uri', () async {
       final updates = <ResourceUpdatedNotification>[];
       final subscription = connection.resourceUpdated.listen(updates.add);
