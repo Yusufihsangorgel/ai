@@ -113,6 +113,44 @@ base class MCPClient {
   }
 }
 
+/// The client-side state for one open [ServerConnection.listen] subscription,
+/// keyed by its own JSON-RPC id (its `subscriptionId`).
+final class _SubscriptionRoute {
+  /// Completes with the server's [SubscriptionsAcknowledgedNotification], or
+  /// with an error if the subscription ends before one arrives.
+  final acknowledged = Completer<SubscriptionsAcknowledgedNotification>();
+
+  final toolListChanged = StreamController<ToolListChangedNotification>();
+  final promptListChanged = StreamController<PromptListChangedNotification>();
+  final resourceListChanged =
+      StreamController<ResourceListChangedNotification>();
+  final resourceUpdated = StreamController<ResourceUpdatedNotification>();
+
+  /// The notification types the server agreed to send, once [acknowledged]
+  /// completes. `null` before then, so nothing is delivered on a stream the
+  /// server has not yet confirmed.
+  SubscriptionFilter? agreed;
+
+  /// Records the server's acknowledgement and unblocks [acknowledged].
+  ///
+  /// A server sends at most one of these per subscription; a later one is
+  /// ignored rather than replacing [agreed] out from under a caller who
+  /// already read it.
+  void acknowledge(SubscriptionsAcknowledgedNotification notification) {
+    if (acknowledged.isCompleted) return;
+    agreed = notification.notifications;
+    acknowledged.complete(notification);
+  }
+
+  /// Closes every notification stream this subscription opened.
+  Future<void> close() => Future.wait([
+    toolListChanged.close(),
+    promptListChanged.close(),
+    resourceListChanged.close(),
+    resourceUpdated.close(),
+  ]);
+}
+
 /// An active server connection.
 base class ServerConnection extends MCPBase {
   /// The version of the protocol this connection speaks, or `null` until one
@@ -232,6 +270,9 @@ base class ServerConnection extends MCPBase {
   final _elicitationCompleteController =
       StreamController<ElicitationCompleteNotification>.broadcast();
 
+  /// Open [listen] subscriptions, by the JSON-RPC id that names them.
+  final _subscriptions = <RequestId, _SubscriptionRoute>{};
+
   /// A 1:1 connection from a client to a server using [channel].
   ///
   /// If the client supports "roots", then it should provide an implementation
@@ -294,22 +335,22 @@ base class ServerConnection extends MCPBase {
 
     registerNotificationHandler(
       PromptListChangedNotification.methodName,
-      _promptListChangedController.sink.add,
+      _handlePromptListChanged,
     );
 
     registerNotificationHandler(
       ToolListChangedNotification.methodName,
-      _toolListChangedController.sink.add,
+      _handleToolListChanged,
     );
 
     registerNotificationHandler(
       ResourceListChangedNotification.methodName,
-      _resourceListChangedController.sink.add,
+      _handleResourceListChanged,
     );
 
     registerNotificationHandler(
       ResourceUpdatedNotification.methodName,
-      _resourceUpdatedController.sink.add,
+      _handleResourceUpdated,
     );
 
     registerNotificationHandler(
@@ -321,11 +362,70 @@ base class ServerConnection extends MCPBase {
       ElicitationCompleteNotification.methodName,
       _elicitationCompleteController.sink.add,
     );
+
+    registerNotificationHandler(
+      SubscriptionsAcknowledgedNotification.methodName,
+      _handleSubscriptionAcknowledged,
+    );
   }
+
+  /// The open [listen] subscription [notification] names under its
+  /// `io.modelcontextprotocol/subscriptionId` metadata, or `null` if it
+  /// carries no such id, or names one this connection has no route for.
+  _SubscriptionRoute? _subscriptionFor(Notification? notification) {
+    final subscriptionId = notification?.meta?[Keys.subscriptionIdMeta];
+    return subscriptionId == null
+        ? null
+        : _subscriptions[RequestId(subscriptionId)];
+  }
+
+  void _handlePromptListChanged(PromptListChangedNotification? notification) {
+    _promptListChangedController.add(notification);
+    final route = _subscriptionFor(notification);
+    if (route != null && route.agreed?.promptsListChanged == true) {
+      route.promptListChanged.add(notification!);
+    }
+  }
+
+  void _handleToolListChanged(ToolListChangedNotification? notification) {
+    _toolListChangedController.add(notification);
+    final route = _subscriptionFor(notification);
+    if (route != null && route.agreed?.toolsListChanged == true) {
+      route.toolListChanged.add(notification!);
+    }
+  }
+
+  void _handleResourceListChanged(
+    ResourceListChangedNotification? notification,
+  ) {
+    _resourceListChangedController.add(notification);
+    final route = _subscriptionFor(notification);
+    if (route != null && route.agreed?.resourcesListChanged == true) {
+      route.resourceListChanged.add(notification!);
+    }
+  }
+
+  void _handleResourceUpdated(ResourceUpdatedNotification notification) {
+    _resourceUpdatedController.add(notification);
+    final route = _subscriptionFor(notification);
+    final subscribedUris = route?.agreed?.resourceSubscriptions;
+    if (subscribedUris != null && subscribedUris.contains(notification.uri)) {
+      route!.resourceUpdated.add(notification);
+    }
+  }
+
+  /// Unblocks the [_SubscriptionRoute.acknowledged] future for the
+  /// subscription [notification] names, if this connection still has one
+  /// open under that id.
+  void _handleSubscriptionAcknowledged(
+    SubscriptionsAcknowledgedNotification notification,
+  ) => _subscriptionFor(notification)?.acknowledge(notification);
 
   /// Close all connections and streams so the process can cleanly exit.
   @override
   Future<void> shutdown() async {
+    final subscriptions = _subscriptions.values.toList();
+    _subscriptions.clear();
     await Future.wait([
       super.shutdown(),
       _promptListChangedController.close(),
@@ -333,6 +433,7 @@ base class ServerConnection extends MCPBase {
       _resourceListChangedController.close(),
       _resourceUpdatedController.close(),
       _logController.close(),
+      for (final route in subscriptions) route.close(),
     ]);
   }
 
@@ -596,6 +697,80 @@ base class ServerConnection extends MCPBase {
           '${CreateMessageRequest.methodName}, ${ListRootsRequest.methodName}',
         );
     }
+  }
+
+  /// Opens a long-lived stream for the notification types [request] selects.
+  ///
+  /// On the 2026-07-28 revision this replaces [subscribeResource] and the
+  /// unfiltered [toolListChanged], [promptListChanged] and
+  /// [resourceListChanged] streams for a caller that wants only the
+  /// notifications it asked for.
+  ///
+  /// The returned future completes once the server sends a
+  /// [SubscriptionsAcknowledgedNotification], with the notification types it
+  /// agreed to and streams for the ones this connection recognizes. Its
+  /// `result` future completes when the server ends the subscription, for
+  /// example while shutting down, or errors if the connection closes first,
+  /// before either arrives.
+  ///
+  /// See https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
+  Future<
+    ({
+      SubscriptionsAcknowledgedNotification acknowledged,
+      Stream<ToolListChangedNotification> toolListChanged,
+      Stream<PromptListChangedNotification> promptListChanged,
+      Stream<ResourceListChangedNotification> resourceListChanged,
+      Stream<ResourceUpdatedNotification> resourceUpdated,
+      Future<SubscriptionsListenResult> result,
+    })
+  >
+  listen(SubscriptionsListenRequest request) {
+    final route = _SubscriptionRoute();
+    RequestId? subscriptionId;
+    final result = sendRequestWithId<SubscriptionsListenResult>(
+      SubscriptionsListenRequest.methodName,
+      request,
+      (id) {
+        subscriptionId = id;
+        _subscriptions[id] = route;
+      },
+    );
+    unawaited(
+      result
+          .then<void>(
+            (_) {
+              if (!route.acknowledged.isCompleted) {
+                route.acknowledged.completeError(
+                  StateError(
+                    '${SubscriptionsListenRequest.methodName} ended before '
+                    '${SubscriptionsAcknowledgedNotification.methodName} '
+                    'arrived.',
+                  ),
+                );
+              }
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              if (!route.acknowledged.isCompleted) {
+                route.acknowledged.completeError(error, stackTrace);
+              }
+            },
+          )
+          .whenComplete(() {
+            final id = subscriptionId;
+            if (id != null) _subscriptions.remove(id);
+            unawaited(route.close());
+          }),
+    );
+    return route.acknowledged.future.then(
+      (acknowledged) => (
+        acknowledged: acknowledged,
+        toolListChanged: route.toolListChanged.stream,
+        promptListChanged: route.promptListChanged.stream,
+        resourceListChanged: route.resourceListChanged.stream,
+        resourceUpdated: route.resourceUpdated.stream,
+        result: result,
+      ),
+    );
   }
 
   /// Subscribes this client to a resource by URI (at `request.uri`).

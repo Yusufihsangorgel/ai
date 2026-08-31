@@ -14,6 +14,7 @@ import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:meta/meta.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'api/api.dart';
+import 'utils/constants.dart';
 
 /// Base class for MCP server-related implementations.
 ///
@@ -25,6 +26,10 @@ import 'api/api.dart';
 /// - [ServerConnection] A class that represents an active server connection.
 base class MCPBase {
   late final Peer _peer;
+
+  /// Reports the id of the next outgoing request to [sendRequestWithId],
+  /// once that request goes out on the wire.
+  void Function(RequestId)? _pendingRequestIdCallback;
 
   /// The name of the associated server.
   ///
@@ -56,7 +61,9 @@ base class MCPBase {
     // The channel type admits only JSON objects, so json_rpc_2 never
     // receives a batch and never writes the `List` frames its batch support
     // would answer one with.
-    _peer = Peer.withoutJson(_maybeForwardMessages(channel, protocolLogSink));
+    _peer = Peer.withoutJson(
+      _maybeForwardMessages(_trackOutgoingRequestIds(channel), protocolLogSink),
+    );
     registerNotificationHandler(
       ProgressNotification.methodName,
       _handleProgress,
@@ -127,6 +134,23 @@ base class MCPBase {
     } finally {
       await closeProgress(request);
     }
+  }
+
+  /// Sends [request] like [sendRequest] does, but first reports its JSON-RPC
+  /// id to [onRequestId] once the request goes out on the wire.
+  ///
+  /// `package:json_rpc_2` assigns the id and never hands it back, so a caller
+  /// that needs it before the response arrives, such as one correlating a
+  /// [SubscriptionsListenRequest]'s out-of-band notifications with the
+  /// request that opened them, has no other way to learn it in time.
+  @protected
+  Future<T> sendRequestWithId<T extends Result?>(
+    String methodName,
+    Request? request,
+    void Function(RequestId) onRequestId,
+  ) {
+    _pendingRequestIdCallback = onRequestId;
+    return sendRequest<T>(methodName, request);
   }
 
   /// Sends [request] to the peer like [sendRequest] does, but leaves any
@@ -202,6 +226,29 @@ base class MCPBase {
     PingRequest.methodName,
     request,
   ).then((_) => true).timeout(timeout, onTimeout: () => false);
+
+  /// Reports the id on each outgoing request message to
+  /// [_pendingRequestIdCallback], for [sendRequestWithId].
+  ///
+  /// A request message has both a `method` and an `id`; a response this peer
+  /// sends back for an incoming request has an `id` but no `method`, so the
+  /// two are never confused.
+  StreamChannel<Map<String, Object?>> _trackOutgoingRequestIds(
+    StreamChannel<Map<String, Object?>> channel,
+  ) => channel.transformSink(
+    StreamSinkTransformer.fromHandlers(
+      handleData: (data, sink) {
+        final callback = _pendingRequestIdCallback;
+        if (callback != null &&
+            data[Keys.method] != null &&
+            data[Keys.id] != null) {
+          _pendingRequestIdCallback = null;
+          callback(RequestId(data[Keys.id]!));
+        }
+        sink.add(data);
+      },
+    ),
+  );
 
   /// If [protocolLogSink] is non-null, emits messages to it for all messages
   /// sent over [channel].
