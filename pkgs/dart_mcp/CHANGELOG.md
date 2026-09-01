@@ -4,6 +4,9 @@
   schemas built from sets or lazy iterables can be JSON encoded.
 - Split the Streamable HTTP implementation into client and server libraries
   without changing its public API.
+- Deprecate `MCPServer.listRoots`, `MCPServer.createMessage`, and
+  `ElicitationRequestSupport.elicit` in favor of `InputRequiredResult`. They
+  still work on the revisions that have them.
 - **BREAKING**:
   - `MCPBase` (including the `MCPServer.fromStreamChannel` and
     `ServerConnection.fromStreamChannel` constructors),
