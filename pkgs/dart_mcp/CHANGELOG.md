@@ -4,6 +4,9 @@
   schemas built from sets or lazy iterables can be JSON encoded.
 - Split the Streamable HTTP implementation into client and server libraries
   without changing its public API.
+- Cap the body of a Streamable HTTP request at `maxRequestBodyBytes`, which
+  defaults to 4 MiB as the TypeScript and Go SDKs do. A larger body is
+  answered with `413` and an invalid request error instead of being parsed.
 - **BREAKING**:
   - `MCPBase` (including the `MCPServer.fromStreamChannel` and
     `ServerConnection.fromStreamChannel` constructors),

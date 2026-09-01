@@ -3543,6 +3543,98 @@ void main() {
     });
   });
 
+  group('request body limit', () {
+    /// A well-formed `tools/list` body, and one padded past it.
+    ///
+    /// The cap is set to [atTheLimit]'s own length below. That keeps these
+    /// tests to a single byte of difference instead of a megabyte of padding,
+    /// and puts the first of them on the boundary itself.
+    final atTheLimit = utf8.encode(jsonEncode(body(listTools)));
+    final overTheLimit = utf8.encode(
+      jsonEncode(body(listTools, params: {'pad': 'x' * 64})),
+    );
+
+    late HttpServer capped;
+    late Uri cappedUri;
+    late HttpClient client;
+
+    /// The `Content-Length` of each request the capped server received, or
+    /// -1 for a chunked one.
+    ///
+    /// The two rejections below have to arrive over different framings to be
+    /// two tests. Each asserts on the framing it got rather than trusting
+    /// [HttpClient] to pick the one it wants.
+    late List<int> declaredLengths;
+
+    setUp(() async {
+      declaredLengths = [];
+      capped = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => capped.close(force: true));
+
+      /// Records how [request] was framed before the handler consumes it.
+      Future<void> serve(HttpRequest request) {
+        declaredLengths.add(request.contentLength);
+        return handleStreamableHttpRequest(
+          request,
+          _HttpTestServer.new,
+          maxRequestBodyBytes: atTheLimit.length,
+        );
+      }
+
+      capped.listen(serve);
+      cappedUri = Uri.http('${capped.address.host}:${capped.port}', '/mcp');
+      client = HttpClient();
+      addTearDown(client.close);
+    });
+
+    /// Posts [payload] to the capped server, declaring a `Content-Length`
+    /// only when [declareLength] is set.
+    ///
+    /// Leaving it unset sends the body chunked, the framing that carries no
+    /// length for the handler to check.
+    Future<(int, String)> postBytes(
+      List<int> payload, {
+      required bool declareLength,
+    }) async {
+      final request = await client.postUrl(cappedUri);
+      headers(listTools).forEach(request.headers.set);
+      if (declareLength) request.contentLength = payload.length;
+      request.add(payload);
+      final response = await request.close();
+      return (response.statusCode, await utf8.decodeStream(response));
+    }
+
+    test('serves a body at the limit', () async {
+      final (status, text) = await postBytes(atTheLimit, declareLength: true);
+      expect(declaredLengths.single, atTheLimit.length);
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a declared body over the limit with 413', () async {
+      final (status, text) = await postBytes(overTheLimit, declareLength: true);
+      expect(declaredLengths.single, greaterThan(atTheLimit.length));
+      expect(status, 413);
+      expect(errorCode(text), error_code.INVALID_REQUEST);
+      expect(
+        errorMessage(text),
+        contains('must not exceed ${atTheLimit.length} bytes'),
+      );
+    });
+
+    test('rejects a chunked body over the limit with 413', () async {
+      final (status, text) = await postBytes(
+        overTheLimit,
+        declareLength: false,
+      );
+      // A chunked body carries no length. The header the test above rejects
+      // on is absent here, and the counter is what answers.
+      expect(declaredLengths.single, -1);
+      expect(status, 413);
+      expect(errorCode(text), error_code.INVALID_REQUEST);
+    });
+  });
+
   group('rejection bodies', () {
     Map<String, Object?> errorData(String text) =>
         (decode(text)[Keys.error] as Map<String, Object?>)[Keys.data]
