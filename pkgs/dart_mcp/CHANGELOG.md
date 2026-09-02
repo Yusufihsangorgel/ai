@@ -1,5 +1,7 @@
 ## 0.6.0-wip
 
+- Move the notification routing for a Streamable HTTP request onto the object
+  that writes the response, without changing the behavior.
 - Convert schema enum values and multi-select defaults to fixed-length lists so
   schemas built from sets or lazy iterables can be JSON encoded.
 - Split the Streamable HTTP implementation into client and server libraries
