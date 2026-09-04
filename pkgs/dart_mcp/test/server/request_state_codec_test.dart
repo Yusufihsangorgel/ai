@@ -305,7 +305,7 @@ void main() {
       expect(states, ['${CallToolRequest.methodName}:initial']);
     });
 
-    test('binds state to the caller context and request target', () async {
+    test('binds state to the caller context and original request', () async {
       final states = <String>[];
       final codec = RequestStateCodec(_key);
       final first = await _dispatchStateRequest(
@@ -321,6 +321,13 @@ void main() {
       for (final request in [
         (params: {Keys.name: 'state'}, context: const [2]),
         (params: {Keys.name: 'other'}, context: const [1]),
+        (
+          params: {
+            Keys.name: 'state',
+            Keys.arguments: {'changed': true},
+          },
+          context: const [1],
+        ),
       ]) {
         final rejected = await _dispatchStateRequest(
           CallToolRequest.methodName,
@@ -336,6 +343,38 @@ void main() {
         expect(error[Keys.message], RequestStateCodec.invalidMessage);
       }
       expect(states, ['${CallToolRequest.methodName}:initial']);
+
+      final reorderedStates = <String>[];
+      final ordered = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {
+          Keys.name: 'state',
+          Keys.arguments: {'b': 2, 'a': 1},
+        },
+        reorderedStates,
+        codec: codec,
+        context: const [1],
+      );
+      final orderedResult = ordered![Keys.result] as Map<String, Object?>;
+      final orderedState = orderedResult[Keys.requestState] as String;
+      final reordered = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {
+          Keys.name: 'state',
+          Keys.arguments: {'a': 1, 'b': 2},
+          Keys.requestState: orderedState,
+        },
+        reorderedStates,
+        codec: codec,
+        context: const [1],
+        id: 2,
+      );
+
+      expect(reordered, isNot(contains(Keys.error)));
+      expect(reorderedStates, [
+        '${CallToolRequest.methodName}:initial',
+        '${CallToolRequest.methodName}:phase=complete',
+      ]);
     });
 
     test('leaves state unchanged when protection is not configured', () async {

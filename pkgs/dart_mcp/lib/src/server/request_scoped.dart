@@ -92,10 +92,10 @@ typedef MCPServerFactory =
 /// When [requestStateCodec] is given, this function seals the `requestState`
 /// in an `input_required` result and verifies it before a retry reaches the
 /// server. The verified payload, not the sealed value, reaches the handler.
-/// [requestStateContext] is included in both operations alongside the request
-/// method and tool, prompt, or resource identifier. An HTTP server can use it
-/// to bind state to the authenticated caller. It must remain the same for the
-/// initial request and its retries.
+/// [requestStateContext] is included in both operations alongside the method
+/// and the original parameters, excluding retry inputs and metadata. An HTTP
+/// server can use it to bind state to the authenticated caller. It must remain
+/// the same for the initial request and its retries.
 ///
 /// Throws an [ArgumentError] if [message] is not a JSON-RPC request or
 /// notification (no string `method`, a `null` id, or a `result` or `error`
@@ -373,22 +373,48 @@ Map<String, Object?> _sealRequestState(
   };
 }
 
-/// The method, target, and caller context bound to a protected state value.
+/// The method, original parameters, and caller context bound to a state value.
 List<int> _requestStateAssociatedData(
   Map<String, Object?> request,
   String method,
   List<int> context,
 ) {
   final params = request[Keys.params];
-  final target = switch (method) {
-    CallToolRequest.methodName || GetPromptRequest.methodName =>
-      params is Map<String, Object?> ? params[Keys.name] : null,
-    ReadResourceRequest.methodName =>
-      params is Map<String, Object?> ? params[Keys.uri] : null,
-    _ => null,
-  };
-  return utf8.encode(jsonEncode([method, target, base64Url.encode(context)]));
+  final originalParams =
+      params is Map<String, Object?>
+          ? (SplayTreeMap<String, Object?>()..addEntries(
+            params.entries
+                .where(
+                  (entry) =>
+                      entry.key != Keys.inputResponses &&
+                      entry.key != Keys.requestState &&
+                      entry.key != Keys.meta,
+                )
+                .map(
+                  (entry) => MapEntry(
+                    entry.key,
+                    _canonicalRequestStateValue(entry.value),
+                  ),
+                ),
+          ))
+          : params;
+  return utf8.encode(
+    jsonEncode([method, originalParams, base64Url.encode(context)]),
+  );
 }
+
+/// Sorts JSON object keys so equivalent request parameters bind identically.
+Object? _canonicalRequestStateValue(Object? value) => switch (value) {
+  Map<String, Object?>() =>
+    SplayTreeMap<String, Object?>()..addEntries(
+      value.entries.map(
+        (entry) =>
+            MapEntry(entry.key, _canonicalRequestStateValue(entry.value)),
+      ),
+    ),
+  List<Object?>() => value.map(_canonicalRequestStateValue).toList(),
+  _ => value,
+};
 
 /// A JSON-RPC error response to the request with the given [id], carrying the
 /// code, message and data of [exception].
