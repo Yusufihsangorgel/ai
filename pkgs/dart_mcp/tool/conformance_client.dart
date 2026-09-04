@@ -228,13 +228,12 @@ Map<String, Object?> _requiredStringArguments(Tool tool) {
 
 /// The client the suite runs its scenarios against.
 ///
-/// It declares the three capabilities it can serve. Roots answers a list,
+/// It declares the two capabilities it can serve. Roots answers a list and
 /// form elicitation answers the confirmation the MRTR rounds in
-/// sep-2322-client-request-state ask for between calls, and sampling answers
-/// an empty message. request-metadata reads all three declarations back off
-/// `_meta`, and no scenario sends the sampling request itself.
+/// sep-2322-client-request-state ask for between calls. request-metadata reads
+/// both declarations back off `_meta`.
 final class _ConformanceClient extends MCPClient
-    with RootsSupport, SamplingSupport, ElicitationFormSupport {
+    with RootsSupport, ElicitationFormSupport {
   _ConformanceClient()
     : super(
         Implementation(name: 'dart_mcp conformance client', version: '0.1.0'),
@@ -252,15 +251,5 @@ final class _ConformanceClient extends MCPClient
               const Iterable<MapEntry<String, Schema>>.empty())
         if (value.type == JsonType.bool) key: true,
     },
-  );
-
-  @override
-  FutureOr<CreateMessageResult> handleCreateMessage(
-    CreateMessageRequest request,
-    Implementation serverInfo,
-  ) => CreateMessageResult(
-    role: Role.assistant,
-    content: TextContent(text: ''),
-    model: 'conformance-stub',
   );
 }
