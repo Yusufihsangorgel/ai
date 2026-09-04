@@ -55,7 +55,10 @@ final class RequestStateCodec {
   final DateTime Function() _clock;
 
   static const _version = 'rs1';
-  static const _invalidMessage = 'Invalid or expired requestState.';
+
+  /// The message used for every wire or verification failure.
+  static const invalidMessage = 'Invalid or expired requestState.';
+
   static final _base64Url = RegExp(r'^[A-Za-z0-9_-]+$');
   static final _domain = utf8.encode('dart_mcp/requestState/rs1');
 
@@ -115,7 +118,7 @@ final class RequestStateCodec {
       }
       return decoded['p'] as String;
     } on FormatException {
-      throw const FormatException(_invalidMessage);
+      throw const FormatException(invalidMessage);
     }
   }
 

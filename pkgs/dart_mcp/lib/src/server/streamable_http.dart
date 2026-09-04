@@ -14,6 +14,7 @@ import '../api/api.dart';
 import '../utils/constants.dart';
 import '../utils/json_rpc_2_object.dart';
 import '../utils/streamable_http.dart';
+import 'request_state_codec.dart';
 import 'server.dart';
 
 /// Handles one Streamable HTTP POST [request] by validating its headers and
@@ -97,12 +98,20 @@ import 'server.dart';
 /// stream to every request and add [onNotification] values to it, allowing a
 /// change produced by one request's server to reach another request's listen
 /// stream.
+///
+/// [requestStateCodec] enables automatic protection for state carried by
+/// multi round-trip tool, prompt, and resource requests. The handler returns
+/// the payload it wants back, and receives that payload again only after the
+/// codec verifies the client's value. [requestStateContext] can bind the state
+/// to the authenticated caller and must be stable across the retry sequence.
 Future<void> handleStreamableHttpRequest(
   HttpRequest request,
   MCPServerFactory serverFactory, {
   void Function(Map<String, Object?> notification)? onNotification,
   Stream<Map<String, Object?>>? subscriptionNotifications,
   Duration listenKeepAliveInterval = const Duration(seconds: 15),
+  RequestStateCodec? requestStateCodec,
+  List<int> requestStateContext = const [],
 }) async {
   final response = request.response;
   if (request.method != 'POST') {
@@ -584,6 +593,8 @@ Future<void> handleStreamableHttpRequest(
         }
         onNotification?.call(notification);
       },
+      requestStateCodec: requestStateCodec,
+      requestStateContext: requestStateContext,
       beforeDispatch:
           method == CallToolRequest.methodName
               ? (server) {

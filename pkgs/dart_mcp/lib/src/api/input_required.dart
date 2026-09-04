@@ -155,8 +155,9 @@ extension type WithInputResponses._fromMap(Map<String, Object?> _value)
   /// unread.
   ///
   /// The value arrives from the client, and the spec has the server treat it
-  /// as attacker-controlled input. Nothing here signs or verifies it. A server
-  /// whose state carries anything it would not accept straight off the wire
-  /// has to protect and check it itself.
+  /// as attacker-controlled input. The request-scoped dispatcher verifies it
+  /// before dispatch when configured with a request-state codec. Without that
+  /// option, a server whose state affects its behavior must protect and check
+  /// the value itself.
   String? get requestState => _value[Keys.requestState] as String?;
 }

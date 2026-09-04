@@ -89,6 +89,14 @@ typedef MCPServerFactory =
 /// before [message] is delivered. A non-`null` result stops dispatch: requests
 /// receive the serialized error and notifications receive no response.
 ///
+/// When [requestStateCodec] is given, this function seals the `requestState`
+/// in an `input_required` result and verifies it before a retry reaches the
+/// server. The verified payload, not the sealed value, reaches the handler.
+/// [requestStateContext] is included in both operations alongside the request
+/// method and tool, prompt, or resource identifier. An HTTP server can use it
+/// to bind state to the authenticated caller. It must remain the same for the
+/// initial request and its retries.
+///
 /// Throws an [ArgumentError] if [message] is not a JSON-RPC request or
 /// notification (no string `method`, a `null` id, or a `result` or `error`
 /// member), or if its method is the legacy `initialize` request or
@@ -104,6 +112,8 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   MCPServerFactory serverFactory, {
   void Function(Map<String, Object?> notification)? onNotification,
   FutureOr<RpcException?> Function(MCPServer server)? beforeDispatch,
+  RequestStateCodec? requestStateCodec,
+  List<int> requestStateContext = const [],
 }) async {
   final object = JsonRpc2Object.fromMap(message);
   if (object.kind == JsonRpc2Kind.response) {
@@ -137,6 +147,24 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
     );
   }
 
+  final isRequest = object.kind == JsonRpc2Kind.request;
+  final stateContext = List<int>.unmodifiable(requestStateContext);
+  late final Map<String, Object?> dispatchMessage;
+  try {
+    dispatchMessage = _openRequestState(
+      message,
+      method,
+      initialization.protocolVersion,
+      requestStateCodec,
+      stateContext,
+    );
+  } on FormatException {
+    final rejection = RpcException.invalidParams(
+      RequestStateCodec.invalidMessage,
+    );
+    return isRequest ? rejection.serialize(message) : null;
+  }
+
   // The message is delivered over an in-memory channel so the exchange runs
   // through the same Peer validation and dispatch path as a wire connection.
   final inbound = StreamController<Map<String, Object?>>();
@@ -145,7 +173,6 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
     StreamChannel.withCloseGuarantee(inbound.stream, outbound.sink),
   );
 
-  final isRequest = object.kind == JsonRpc2Kind.request;
   final response = Completer<Map<String, Object?>?>();
   final subscription = outbound.stream.listen(
     (data) {
@@ -187,10 +214,21 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
                 method,
                 initialization,
               );
+              var protectedData = data;
+              if (refusal == null) {
+                protectedData = _sealRequestState(
+                  data,
+                  message,
+                  method,
+                  initialization.protocolVersion,
+                  requestStateCodec,
+                  stateContext,
+                );
+              }
               response.complete(
                 refusal == null
                     ? _withServerFields(
-                      data,
+                      protectedData,
                       server.implementation,
                       method,
                       initialization.protocolVersion,
@@ -251,7 +289,7 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
         when isRequest && method == SubscriptionsListenRequest.methodName) {
       subscriptions.nextSubscriptionId = RequestId(message[Keys.id]!);
     }
-    inbound.add(message);
+    inbound.add(dispatchMessage);
     if (isRequest) {
       final result = await response.future;
       if (method == SubscriptionsListenRequest.methodName &&
@@ -266,6 +304,90 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
     await server.done;
     await subscription.cancel();
   }
+}
+
+/// Returns [message] with a verified `requestState` payload, when configured.
+Map<String, Object?> _openRequestState(
+  Map<String, Object?> message,
+  String method,
+  ProtocolVersion protocolVersion,
+  RequestStateCodec? codec,
+  List<int> context,
+) {
+  if (codec == null ||
+      protocolVersion < ProtocolVersion.v2026_07_28 ||
+      !_inputRequiredMethods.contains(method)) {
+    return message;
+  }
+  final params = message[Keys.params];
+  if (params is! Map<String, Object?> ||
+      !params.containsKey(Keys.requestState)) {
+    return message;
+  }
+  final state = params[Keys.requestState];
+  if (state is! String) {
+    throw const FormatException(RequestStateCodec.invalidMessage);
+  }
+  return {
+    ...message,
+    Keys.params: {
+      ...params,
+      Keys.requestState: codec.open(
+        state,
+        associatedData: _requestStateAssociatedData(message, method, context),
+      ),
+    },
+  };
+}
+
+/// Returns [response] with its `input_required` state sealed, when configured.
+Map<String, Object?> _sealRequestState(
+  Map<String, Object?> response,
+  Map<String, Object?> request,
+  String method,
+  ProtocolVersion protocolVersion,
+  RequestStateCodec? codec,
+  List<int> context,
+) {
+  if (codec == null ||
+      protocolVersion < ProtocolVersion.v2026_07_28 ||
+      !_inputRequiredMethods.contains(method)) {
+    return response;
+  }
+  final result = JsonRpc2Response.fromMap(response).result;
+  if (result is! Map<String, Object?> ||
+      result[Keys.resultType] != ResultTypes.inputRequired) {
+    return response;
+  }
+  final state = result[Keys.requestState];
+  if (state is! String) return response;
+  return {
+    ...response,
+    Keys.result: {
+      ...result,
+      Keys.requestState: codec.seal(
+        state,
+        associatedData: _requestStateAssociatedData(request, method, context),
+      ),
+    },
+  };
+}
+
+/// The method, target, and caller context bound to a protected state value.
+List<int> _requestStateAssociatedData(
+  Map<String, Object?> request,
+  String method,
+  List<int> context,
+) {
+  final params = request[Keys.params];
+  final target = switch (method) {
+    CallToolRequest.methodName || GetPromptRequest.methodName =>
+      params is Map<String, Object?> ? params[Keys.name] : null,
+    ReadResourceRequest.methodName =>
+      params is Map<String, Object?> ? params[Keys.uri] : null,
+    _ => null,
+  };
+  return utf8.encode(jsonEncode([method, target, base64Url.encode(context)]));
 }
 
 /// A JSON-RPC error response to the request with the given [id], carrying the

@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 
 import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart';
@@ -15,6 +16,7 @@ import '../api/api.dart';
 import '../shared.dart';
 import '../utils/constants.dart';
 import '../utils/json_rpc_2_object.dart';
+import 'request_state_codec.dart';
 
 part 'completions_support.dart';
 part 'elicitation_request_support.dart';

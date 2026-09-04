@@ -6,6 +6,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dart_mcp/server.dart';
+import 'package:dart_mcp/src/utils/constants.dart';
+import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:test/test.dart';
 
@@ -225,6 +227,128 @@ void main() {
       ),
     );
   });
+
+  group('request-scoped protection', () {
+    test('seals and opens state for every multi round-trip method', () async {
+      final codec = RequestStateCodec(_key, clock: () => DateTime.utc(2026));
+      final context = utf8.encode('caller-a');
+      final cases = [
+        (
+          method: CallToolRequest.methodName,
+          params: <String, Object?>{Keys.name: 'state'},
+        ),
+        (
+          method: GetPromptRequest.methodName,
+          params: <String, Object?>{Keys.name: 'state'},
+        ),
+        (
+          method: ReadResourceRequest.methodName,
+          params: <String, Object?>{Keys.uri: 'state:///value'},
+        ),
+      ];
+
+      for (final testCase in cases) {
+        final states = <String>[];
+        final first = await _dispatchStateRequest(
+          testCase.method,
+          testCase.params,
+          states,
+          codec: codec,
+          context: context,
+        );
+        final firstResult = first![Keys.result] as Map<String, Object?>;
+        final protectedState = firstResult[Keys.requestState] as String;
+
+        expect(protectedState, isNot('phase=complete'));
+        expect(states, ['${testCase.method}:initial']);
+
+        final second = await _dispatchStateRequest(
+          testCase.method,
+          {...testCase.params, Keys.requestState: protectedState},
+          states,
+          codec: codec,
+          context: context,
+          id: 2,
+        );
+
+        expect(second, isNot(contains(Keys.error)));
+        expect(states, [
+          '${testCase.method}:initial',
+          '${testCase.method}:phase=complete',
+        ]);
+      }
+    });
+
+    test('rejects modified state before dispatch', () async {
+      final states = <String>[];
+      final codec = RequestStateCodec(_key);
+      final first = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state'},
+        states,
+        codec: codec,
+      );
+      final result = first![Keys.result] as Map<String, Object?>;
+      final protectedState = result[Keys.requestState] as String;
+
+      final rejected = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state', Keys.requestState: _changeFirst(protectedState)},
+        states,
+        codec: codec,
+        id: 2,
+      );
+      final error = rejected![Keys.error] as Map<String, Object?>;
+
+      expect(error[Keys.code], error_code.INVALID_PARAMS);
+      expect(error[Keys.message], RequestStateCodec.invalidMessage);
+      expect(states, ['${CallToolRequest.methodName}:initial']);
+    });
+
+    test('binds state to the caller context and request target', () async {
+      final states = <String>[];
+      final codec = RequestStateCodec(_key);
+      final first = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state'},
+        states,
+        codec: codec,
+        context: const [1],
+      );
+      final result = first![Keys.result] as Map<String, Object?>;
+      final protectedState = result[Keys.requestState] as String;
+
+      for (final request in [
+        (params: {Keys.name: 'state'}, context: const [2]),
+        (params: {Keys.name: 'other'}, context: const [1]),
+      ]) {
+        final rejected = await _dispatchStateRequest(
+          CallToolRequest.methodName,
+          {...request.params, Keys.requestState: protectedState},
+          states,
+          codec: codec,
+          context: request.context,
+          id: 2,
+        );
+        final error = rejected![Keys.error] as Map<String, Object?>;
+
+        expect(error[Keys.code], error_code.INVALID_PARAMS);
+        expect(error[Keys.message], RequestStateCodec.invalidMessage);
+      }
+      expect(states, ['${CallToolRequest.methodName}:initial']);
+    });
+
+    test('leaves state unchanged when protection is not configured', () async {
+      final states = <String>[];
+      final response = await _dispatchStateRequest(CallToolRequest.methodName, {
+        Keys.name: 'state',
+        Keys.requestState: 'plain',
+      }, states);
+
+      expect(response, isNot(contains(Keys.error)));
+      expect(states, ['${CallToolRequest.methodName}:plain']);
+    });
+  });
 }
 
 String _changeFirst(String value) =>
@@ -272,5 +396,80 @@ final class _RequestStateServer extends TestMCPServer with ToolsSupport {
     } on FormatException {
       throw RpcException.invalidParams('Invalid requestState.');
     }
+  }
+}
+
+Future<Map<String, Object?>?> _dispatchStateRequest(
+  String method,
+  Map<String, Object?> params,
+  List<String> states, {
+  RequestStateCodec? codec,
+  List<int> context = const [],
+  Object id = 1,
+}) => handleRequestScopedMessage(
+  {Keys.jsonrpc: '2.0', Keys.id: id, Keys.method: method, Keys.params: params},
+  MCPServerInitialization(
+    protocolVersion: ProtocolVersion.v2026_07_28,
+    clientCapabilities: ClientCapabilities(),
+  ),
+  (channel) => _RequestScopedStateServer(channel, states),
+  requestStateCodec: codec,
+  requestStateContext: context,
+);
+
+final class _RequestScopedStateServer extends TestMCPServer {
+  _RequestScopedStateServer(super.channel, this.states);
+
+  final List<String> states;
+
+  @override
+  FutureOr<void> initialize(MCPServerInitialization initialization) {
+    registerRequestHandler<CallToolRequest, CallToolResponse>(
+      CallToolRequest.methodName,
+      _callTool,
+    );
+    registerRequestHandler<GetPromptRequest, GetPromptResponse>(
+      GetPromptRequest.methodName,
+      _getPrompt,
+    );
+    registerRequestHandler<ReadResourceRequest, ReadResourceResponse>(
+      ReadResourceRequest.methodName,
+      _readResource,
+    );
+    return super.initialize(initialization);
+  }
+
+  CallToolResponse _callTool(CallToolRequest request) {
+    final state = request.requestState;
+    _record(CallToolRequest.methodName, state);
+    return state == null
+        ? InputRequiredResult(requestState: 'phase=complete')
+        : CallToolResult(content: [TextContent(text: state)]);
+  }
+
+  GetPromptResponse _getPrompt(GetPromptRequest request) {
+    final state = request.requestState;
+    _record(GetPromptRequest.methodName, state);
+    return state == null
+        ? InputRequiredResult(requestState: 'phase=complete')
+        : GetPromptResult(
+          messages: [
+            PromptMessage(role: Role.user, content: TextContent(text: state)),
+          ],
+        );
+  }
+
+  ReadResourceResponse _readResource(ReadResourceRequest request) {
+    final state = request.requestState;
+    _record(ReadResourceRequest.methodName, state);
+    return state == null
+        ? InputRequiredResult(requestState: 'phase=complete')
+        : ReadResourceResult(
+          contents: [TextResourceContents(uri: request.uri, text: state)],
+        );
+  }
+
+  void _record(String method, String? state) {
+    states.add('$method:${state ?? 'initial'}');
   }
 }
