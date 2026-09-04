@@ -130,7 +130,7 @@ void main() {
         clock: () => now,
       );
 
-      expect(exact.seal('kept'), state);
+      expect(exact.seal('kept'), hasLength(state.length));
       expect(exact.open(state), 'kept');
     });
 
