@@ -57,7 +57,7 @@ final class RequestStateCodec {
   static const _version = 'rs1';
 
   /// The message used for every wire or verification failure.
-  static const invalidMessage = 'Invalid or expired requestState.';
+  static const invalidMessage = 'Invalid or expired requestState';
 
   static final _base64Url = RegExp(r'^[A-Za-z0-9_-]+$');
   static final _domain = utf8.encode('dart_mcp/requestState/rs1');
@@ -102,9 +102,7 @@ final class RequestStateCodec {
         throw const FormatException();
       }
       final body = sections[1];
-      final actualTag = _decode(sections[2]);
-      final expectedTag = _mac(body, associatedData).bytes;
-      if (!_constantTimeEquals(actualTag, expectedTag)) {
+      if (_mac(body, associatedData) != Digest(_decode(sections[2]))) {
         throw const FormatException();
       }
       final decoded = jsonDecode(utf8.decode(_decode(body)));
@@ -142,16 +140,5 @@ final class RequestStateCodec {
       value.padRight(value.length + padding, '='),
     );
     return decoded;
-  }
-
-  static bool _constantTimeEquals(List<int> left, List<int> right) {
-    var difference = left.length ^ right.length;
-    final length = left.length > right.length ? left.length : right.length;
-    for (var index = 0; index < length; index++) {
-      final leftByte = index < left.length ? left[index] : 0;
-      final rightByte = index < right.length ? right[index] : 0;
-      difference |= leftByte ^ rightByte;
-    }
-    return difference == 0;
   }
 }

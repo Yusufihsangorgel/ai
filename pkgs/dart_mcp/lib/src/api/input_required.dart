@@ -157,7 +157,7 @@ extension type WithInputResponses._fromMap(Map<String, Object?> _value)
   /// The value arrives from the client, and the spec has the server treat it
   /// as attacker-controlled input. The request-scoped dispatcher verifies it
   /// before dispatch when configured with a request-state codec. Without that
-  /// option, a server whose state affects its behavior must protect and check
-  /// the value itself.
+  /// option, a server that lets its state affect behavior has to protect and
+  /// check it itself.
   String? get requestState => _value[Keys.requestState] as String?;
 }

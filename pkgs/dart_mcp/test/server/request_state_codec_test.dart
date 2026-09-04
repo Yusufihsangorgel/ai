@@ -53,8 +53,9 @@ void main() {
       final codec = RequestStateCodec(_key);
       final state = codec.seal('kept');
       final sections = state.split('.');
-      final changedBody = _changeFirst(sections[1]);
-      final changedTag = _changeFirst(sections[2]);
+      final changedBody = _changeAt(sections[1], 0);
+      final changedTag = _changeAt(sections[2], 0);
+      final changedTagTail = _changeAt(sections[2], sections[2].length - 8);
 
       expect(
         () => codec.open('${sections[0]}.$changedBody.${sections[2]}'),
@@ -62,6 +63,10 @@ void main() {
       );
       expect(
         () => codec.open('${sections[0]}.${sections[1]}.$changedTag'),
+        throwsFormatException,
+      );
+      expect(
+        () => codec.open('${sections[0]}.${sections[1]}.$changedTagTail'),
         throwsFormatException,
       );
     });
@@ -156,7 +161,7 @@ void main() {
             isA<FormatException>().having(
               (error) => error.message,
               'message',
-              'Invalid or expired requestState.',
+              'Invalid or expired requestState',
             ),
           ),
         );
@@ -197,7 +202,7 @@ void main() {
                     ...message,
                     'params': {
                       ...params as Map,
-                      'requestState': _changeFirst(state),
+                      'requestState': _changeAt(state, 0),
                     },
                   }.cast<String, Object?>(),
                 );
@@ -293,7 +298,7 @@ void main() {
 
       final rejected = await _dispatchStateRequest(
         CallToolRequest.methodName,
-        {Keys.name: 'state', Keys.requestState: _changeFirst(protectedState)},
+        {Keys.name: 'state', Keys.requestState: _changeAt(protectedState, 0)},
         states,
         codec: codec,
         id: 2,
@@ -390,8 +395,8 @@ void main() {
   });
 }
 
-String _changeFirst(String value) =>
-    '${value[0] == 'A' ? 'B' : 'A'}${value.substring(1)}';
+String _changeAt(String value, int index) =>
+    value.replaceRange(index, index + 1, value[index] == 'A' ? 'B' : 'A');
 
 String _sealedAt(DateTime now) =>
     RequestStateCodec(_key, clock: () => now).seal('kept');
