@@ -2686,6 +2686,28 @@ void main() {
       expect(servers, isEmpty);
     });
 
+    test('compares request header names case insensitively', () async {
+      final requestBody = jsonEncode(
+        body(callTool, params: {Keys.name: 'test/version'}),
+      );
+      final response = await rawRequest(
+        'POST /mcp HTTP/1.1\r\n'
+        'Host: localhost\r\n'
+        'Content-Type: application/json\r\n'
+        'Accept: application/json, text/event-stream\r\n'
+        'mcp-protocol-version: $version\r\n'
+        'MCP-METHOD: $callTool\r\n'
+        'mCp-NaMe: test/version\r\n'
+        'Content-Length: ${utf8.encode(requestBody).length}\r\n'
+        'Connection: close\r\n'
+        '\r\n'
+        '$requestBody',
+      );
+
+      expect(response, startsWith('HTTP/1.1 200'));
+      expect(errorCode(jsonBody(response)), isNull);
+    });
+
     test('compares Mcp-Method values case sensitively', () async {
       // Header names are case insensitive, header values are not.
       final (status, _, text) = await post(
@@ -2968,6 +2990,20 @@ void main() {
       expect(status, 200);
       expect(errorCode(text), isNull);
       expect((servers.single as _HttpTestServer).listToolsCalls, 0);
+    });
+
+    test('checks a later custom header after a match', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({
+          'Mcp-Param-Region': 'us-west1',
+          'mCp-pArAm-CoUnT': '7',
+        }),
+        json: callWithHeaderParam({'region': 'us-west1', 'count': 42}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+      expect(errorMessage(text), contains('7'));
+      expect(errorMessage(text), contains('42'));
     });
 
     test('rejects arguments that are not an object', () async {
