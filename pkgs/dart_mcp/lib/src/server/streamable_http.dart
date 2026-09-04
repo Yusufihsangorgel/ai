@@ -86,10 +86,9 @@ import 'server.dart';
 /// result follows it as the last event. A request answered without one gets a
 /// JSON body instead. Long-lived change notifications go only to a successful
 /// `subscriptions/listen` response whose acknowledged filter selects them.
-/// A listen response writes an SSE comment every [listenKeepAliveInterval] to
-/// keep an idle stream open, which is also what notices a client that went
-/// away. Closing that response shuts down its request server and ends the
-/// subscription without a final result.
+/// An SSE response writes a comment every [listenKeepAliveInterval] to keep an
+/// idle stream open, which is also what notices a client that went away.
+/// Closing that response shuts down its request server without a final result.
 /// [onNotification] sees every notification either way, held back or not.
 /// When [subscriptionNotifications] is provided, each listen request reads
 /// matching changes from that stream. An embedder can pass the same broadcast
@@ -442,33 +441,26 @@ Future<void> handleStreamableHttpRequest(
     );
   }
 
-  final answer = _Answer(
-    response,
-    keepAliveInterval:
-        method == SubscriptionsListenRequest.methodName
-            ? listenKeepAliveInterval
-            : null,
-  );
+  final answer = _Answer(response, keepAliveInterval: listenKeepAliveInterval);
   var pendingNotifications =
       method == CallToolRequest.methodName ? <Map<String, Object?>>[] : null;
   MCPServer? activeServer;
   StreamSubscription<Map<String, Object?>>? notificationSubscription;
   var responseClosed = false;
   var listenFailed = false;
-  if (method == SubscriptionsListenRequest.methodName) {
-    unawaited(() async {
-      try {
-        await response.done;
-      } catch (_) {
-        // A disconnected client cannot receive another response.
-      }
-      responseClosed = true;
-      answer.cancel();
-      await notificationSubscription?.cancel();
-      final server = activeServer;
-      if (server != null && server.isActive) await server.shutdown();
-    }());
-  }
+  unawaited(() async {
+    try {
+      await response.done;
+    } catch (_) {
+      // A disconnected client cannot receive another response.
+    }
+    if (!answer.isStreaming || answer.isFinished) return;
+    responseClosed = true;
+    answer.cancel();
+    await notificationSubscription?.cancel();
+    final server = activeServer;
+    if (server != null && server.isActive) await server.shutdown();
+  }());
 
   /// Writes [notification] to the response stream, skipping the ones an
   /// embedder serves on a listen stream.
@@ -682,10 +674,15 @@ class _Answer {
   final Duration? keepAliveInterval;
   bool _committed = false;
   bool _finished = false;
+  bool _cancelled = false;
   Timer? _keepAlive;
+
+  bool get isStreaming => _committed;
+  bool get isFinished => _finished;
 
   /// Sends [notification] on the stream, committing to it if this is the first.
   void notify(Map<String, Object?> notification) {
+    if (_finished || _cancelled) return;
     if (!_committed) _commit();
     _response.write(_sseEvent(notification));
   }
@@ -712,9 +709,9 @@ class _Answer {
 
   /// Sends [result] and closes. A second call is ignored.
   Future<void> finish(Map<String, Object?> result) async {
-    if (_finished) return;
+    if (_finished || _cancelled) return;
     _finished = true;
-    cancel();
+    _keepAlive?.cancel();
     if (_committed) {
       _response.write(_sseEvent(result));
     } else {
@@ -727,6 +724,7 @@ class _Answer {
   }
 
   void cancel() {
+    _cancelled = true;
     _keepAlive?.cancel();
   }
 }
