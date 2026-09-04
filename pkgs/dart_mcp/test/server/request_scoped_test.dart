@@ -1202,6 +1202,84 @@ void main() {
       },
     );
 
+    test('reports a crashed tool instead of answering with it', () async {
+      final harness = _DispatcherHarness();
+      final reported = <AsyncError>[];
+      final response = await harness.dispatch(
+        _callTool('crash'),
+        _initialization(),
+        onHandlerError:
+            (error, stackTrace) => reported.add(AsyncError(error, stackTrace)),
+      );
+
+      final wireText = jsonEncode(response);
+      final result = CallToolResult.fromMap(_result(response));
+      expect(result.isError, isTrue);
+      expect(
+        (result.content.single as TextContent).text,
+        'Error executing tool crash',
+      );
+      expect(wireText, isNot(contains('The handler failed')));
+      expect(wireText, isNot(contains('StateError')));
+      expect(wireText, isNot(contains('request_scoped_test.dart')));
+      expect(reported, hasLength(1));
+      expect(reported.single.error, isStateError);
+      expect('${reported.single.error}', contains('The handler failed'));
+    });
+
+    test('hides a handler error when its reporter fails', () async {
+      final harness = _DispatcherHarness();
+      final callbackErrors = <AsyncError>[];
+      Map<String, Object?>? response;
+      await runZonedGuarded(
+        () async {
+          response = await harness.dispatch(
+            _callTool('crash'),
+            _initialization(),
+            onHandlerError: (handlerError, _) {
+              expect(handlerError, isStateError);
+              throw ArgumentError('The error reporter failed');
+            },
+          );
+        },
+        (error, stackTrace) {
+          callbackErrors.add(AsyncError(error, stackTrace));
+        },
+      );
+
+      final wireText = jsonEncode(response);
+      expect(
+        (CallToolResult.fromMap(_result(response)).content.single
+                as TextContent)
+            .text,
+        'Error executing tool crash',
+      );
+      expect(wireText, isNot(contains('The handler failed')));
+      expect(wireText, isNot(contains('The error reporter failed')));
+      expect(wireText, isNot(contains('StateError')));
+      expect(wireText, isNot(contains('ArgumentError')));
+      expect(wireText, isNot(contains('request_scoped_test.dart')));
+      expect(callbackErrors, hasLength(1));
+      expect(callbackErrors.single.error, isArgumentError);
+      expect('$callbackErrors', contains('The error reporter failed'));
+    });
+
+    test('refuses array params without a stack trace', () async {
+      final harness = _DispatcherHarness();
+      final response = await harness.dispatch({
+        Keys.jsonrpc: '2.0',
+        Keys.id: 1,
+        Keys.method: CallToolRequest.methodName,
+        Keys.params: <Object?>[],
+      }, _initialization());
+
+      final wireText = jsonEncode(response);
+      final error = response![Keys.error] as Map<String, Object?>;
+      expect(error[Keys.code], -32602);
+      expect(wireText, isNot(contains('request_scoped.dart')));
+      expect(wireText, isNot(contains('"stack"')));
+    });
+
     test('isolates concurrent dispatches', () async {
       final harness = _DispatcherHarness();
       final responses = await Future.wait([
@@ -1449,6 +1527,7 @@ final class _DispatcherHarness {
     Map<String, Object?> message,
     MCPServerInitialization initialization, {
     void Function(Map<String, Object?> notification)? onNotification,
+    void Function(Object, StackTrace)? onHandlerError,
     FutureOr<RpcException?> Function(MCPServer server)? beforeDispatch,
   }) => handleRequestScopedMessage(
     message,
@@ -1460,6 +1539,7 @@ final class _DispatcherHarness {
       return server;
     },
     onNotification: onNotification,
+    onHandlerError: onHandlerError,
     beforeDispatch: beforeDispatch,
   );
 }
@@ -1593,6 +1673,10 @@ final class _DispatcherTestServer extends TestMCPServer
       log(LoggingLevel.error, 'from the handler');
       return CallToolResult(content: [TextContent(text: 'notified')]);
     });
+    registerTool(
+      Tool(name: 'crash', inputSchema: ObjectSchema()),
+      (_) => throw StateError('The handler failed'),
+    );
     registerTool(Tool(name: 'roots', inputSchema: ObjectSchema()), (_) async {
       final roots = await listRoots(ListRootsRequest());
       return CallToolResult(content: [TextContent(text: '$roots')]);

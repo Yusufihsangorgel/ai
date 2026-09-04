@@ -50,17 +50,15 @@ import 'server.dart';
 /// knowledge this handler does not have, so it belongs to the embedding
 /// HTTP server, along with authentication and request size limits.
 ///
-/// Responses produced by the dispatched server are written unchanged, so an
-/// error a request handler throws reaches the client with whatever payload
-/// `package:json_rpc_2` attached to it, including a Dart stack trace for
-/// errors other than [RpcException]s. Handlers that must not disclose server
-/// internals to a remote client throw [RpcException]s instead. Until
-/// something has been written the status such a body gets follows its error
-/// code: an internal or server error is a 500, so a failing handler is visible
-/// to intermediaries that never read the body, and a code the specification
-/// has not mapped to a status keeps 200. Once a notification has gone out on
-/// the stream the status was spent on it at 200, and the error goes out as the
-/// last event of the stream instead.
+/// An unexpected request handler error goes to this zone's uncaught error
+/// handler and is not written: a crashed tool answers with a generic tool
+/// execution error, any other handler with a generic internal error. An
+/// [RpcException] is written unchanged. Until something has been written the
+/// status such a body gets follows its error code. An internal or server error
+/// is a 500, so a failing handler is visible to intermediaries that never read
+/// the body, and a code the specification has not mapped to a status keeps 200.
+/// Once a notification has gone out on the stream the status was spent on it at
+/// 200, and the error goes out as the last event of the stream instead.
 ///
 /// If [serverFactory] or [MCPServer.initialize] throws, the request gets an
 /// internal-error body, on the stream when one is open and with a 500 when it
@@ -597,6 +595,7 @@ Future<void> handleStreamableHttpRequest(
                 return null;
               }
               : null,
+      onHandlerError: Zone.current.handleUncaughtError,
     );
   } catch (_) {
     // The server could not be built for this request. Answer before the error

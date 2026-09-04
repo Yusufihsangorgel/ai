@@ -134,9 +134,19 @@ base mixin ToolsSupport on MCPServer {
         // converted into failed tool call responses.
         rethrow;
       }
+      // A crash is still a tool execution error, so it keeps its result shape.
+      // Only the text changes: a transport that takes the error over reads it
+      // there instead of on the wire.
       return CallToolResult(
         isError: true,
-        content: [TextContent(text: '$e\n$s')],
+        content: [
+          TextContent(
+            text:
+                reportRequestHandlerError(e, s)
+                    ? 'Error executing tool ${request.name}'
+                    : '$e\n$s',
+          ),
+        ],
       );
     }
   }

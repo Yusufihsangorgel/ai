@@ -10,10 +10,21 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:async/async.dart' show StreamSinkTransformer;
+import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:meta/meta.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'api/api.dart';
+
+/// Runs [body] in a zone where [MCPBase.reportRequestHandlerError] hands an
+/// unexpected request handler error to [reporter].
+T runWithRequestHandlerErrorReporter<T>(
+  void Function(Object, StackTrace)? reporter,
+  T Function() body,
+) =>
+    reporter == null
+        ? body()
+        : runZoned(body, zoneValues: {#_requestHandlerErrorReporter: reporter});
 
 /// Base class for MCP server-related implementations.
 ///
@@ -25,6 +36,7 @@ import 'api/api.dart';
 /// - [ServerConnection] A class that represents an active server connection.
 base class MCPBase {
   late final Peer _peer;
+  final void Function(Object, StackTrace)? _requestHandlerErrorReporter;
 
   /// The name of the associated server.
   ///
@@ -52,7 +64,9 @@ base class MCPBase {
   MCPBase(
     StreamChannel<Map<String, Object?>> channel, {
     Sink<String>? protocolLogSink,
-  }) {
+  }) : _requestHandlerErrorReporter =
+           Zone.current[#_requestHandlerErrorReporter]
+               as void Function(Object, StackTrace)? {
     // The channel type admits only JSON objects, so json_rpc_2 never
     // receives a batch and never writes the `List` frames its batch support
     // would answer one with.
@@ -65,6 +79,23 @@ base class MCPBase {
     registerRequestHandler(PingRequest.methodName, _handlePing);
 
     _peer.listen().whenComplete(shutdown);
+  }
+
+  /// Hands [error] to the reporter a request-scoped transport installed, and
+  /// answers whether one took it.
+  ///
+  /// A reporter that throws is itself reported as an uncaught error, so a
+  /// failure to report cannot reach the peer either.
+  @protected
+  bool reportRequestHandlerError(Object error, StackTrace stackTrace) {
+    final reporter = _requestHandlerErrorReporter;
+    if (reporter == null) return false;
+    try {
+      reporter(error, stackTrace);
+    } catch (reportingError, reportingStackTrace) {
+      Zone.current.handleUncaughtError(reportingError, reportingStackTrace);
+    }
+    return true;
   }
 
   /// Handles cleanup of all streams and other resources on shutdown.
@@ -81,19 +112,27 @@ base class MCPBase {
 
   /// Registers a handler for the method [name] on this server.
   ///
-  /// Any errors in [impl] will be reported to the client as JSON-RPC 2.0
-  /// errors.
+  /// An [RpcException] from [impl] reaches the client as it is. Anything else
+  /// goes to [reportRequestHandlerError], and the client gets a generic
+  /// internal error when a reporter takes it.
   void registerRequestHandler<T extends Request?, R extends Result?>(
     String name,
     FutureOr<R> Function(T) impl,
-  ) => _peer.registerMethod(name, (Parameters p) {
+  ) => _peer.registerMethod(name, (Parameters p) async {
     if (p.value != null && p.value is! Map) {
-      throw ArgumentError(
+      throw RpcException.invalidParams(
         'Request to $name must be a Map or null. Instead, got '
         '${p.value.runtimeType}',
       );
     }
-    return impl((p.value as Map?)?.cast<String, Object?>() as T);
+    try {
+      return await impl((p.value as Map?)?.cast<String, Object?>() as T);
+    } on RpcException {
+      rethrow;
+    } catch (error, stackTrace) {
+      if (!reportRequestHandlerError(error, stackTrace)) rethrow;
+      throw RpcException(error_code.INTERNAL_ERROR, 'Internal server error');
+    }
   });
 
   /// Registers a notification handler named [name] on this server.

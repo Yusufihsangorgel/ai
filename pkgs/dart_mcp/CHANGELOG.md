@@ -6,6 +6,12 @@
   without changing its public API.
 - Stop sending `notifications/roots/list_changed` to a server that speaks
   2026-07-28. An unsettled connection still gets it.
+- Keep an unexpected request handler error off the wire when the transport
+  passes `onHandlerError`, so a crashed handler answers with a generic internal
+  error and a crashed tool with a generic tool execution error.
+  `handleStreamableHttpRequest` passes it.
+- Refuse request params that are not a JSON object as invalid params, not as a
+  server error.
 - **BREAKING**:
   - `MCPBase` (including the `MCPServer.fromStreamChannel` and
     `ServerConnection.fromStreamChannel` constructors),

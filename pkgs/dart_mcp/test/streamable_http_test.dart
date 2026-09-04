@@ -3649,16 +3649,90 @@ void main() {
       expect(result[Keys.isError], isTrue);
     });
 
-    test('maps a crashed handler to 500', () async {
-      // A handler which throws something other than an RpcException surfaces
-      // as a server error, the same class of failure as a server which cannot
-      // be built, which is answered with 500 as well.
-      final (status, _, text) = await post(
-        headers: headers('test/crash'),
-        json: body('test/crash'),
+    /// Serves one request from a zone that collects the errors reported to it.
+    Future<AsyncError> reportedError(Future<void> Function() request) async {
+      final failing = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => failing.close(force: true));
+      final reported = Completer<AsyncError>();
+      runZonedGuarded(
+        () => failing.listen(
+          (incoming) =>
+              handleStreamableHttpRequest(incoming, _HttpTestServer.new),
+        ),
+        (error, stackTrace) => reported.complete(AsyncError(error, stackTrace)),
       );
+      uri = Uri.http('${failing.address.host}:${failing.port}', '/mcp');
+      await request();
+      return reported.future.timeout(const Duration(seconds: 5));
+    }
+
+    test('hides a crashed handler and reports it through the zone', () async {
+      late String text;
+      late int status;
+      final serverError = await reportedError(() async {
+        (status, _, text) = await post(
+          headers: headers('test/crash'),
+          json: body('test/crash'),
+        );
+      });
+
       expect(status, 500);
-      expect(errorCode(text), error_code.SERVER_ERROR);
+      expect(errorCode(text), error_code.INTERNAL_ERROR);
+      expect(errorMessage(text), 'Internal server error');
+      expect(text, isNot(contains('This handler always crashes')));
+      expect(text, isNot(contains('StateError')));
+      expect(text, isNot(contains('streamable_http_test.dart')));
+      expect(text, isNot(contains('"stack"')));
+      expect(serverError.error, isStateError);
+      expect('$serverError', contains('This handler always crashes'));
+      expect(
+        '${serverError.stackTrace}',
+        contains('streamable_http_test.dart'),
+      );
+    });
+
+    test('answers a crashed tool with a generic execution error', () async {
+      late String text;
+      late int status;
+      final serverError = await reportedError(() async {
+        (status, _, text) = await post(
+          headers: {...headers(callTool), 'Mcp-Name': 'test/crash-tool'},
+          json: body(callTool, params: {Keys.name: 'test/crash-tool'}),
+        );
+      });
+      final result = decode(text)[Keys.result] as Map<String, Object?>;
+
+      expect(status, 200);
+      expect(result[Keys.isError], isTrue);
+      expect(CallToolResult.fromMap(result).content, [
+        isA<TextContent>().having(
+          (content) => content.text,
+          'text',
+          'Error executing tool test/crash-tool',
+        ),
+      ]);
+      expect(text, isNot(contains('This tool always crashes')));
+      expect(text, isNot(contains('StateError')));
+      expect(text, isNot(contains('streamable_http_test.dart')));
+      expect(serverError.error, isStateError);
+      expect('$serverError', contains('This tool always crashes'));
+    });
+
+    test('keeps the data an RpcException carries', () async {
+      final (status, _, text) = await post(
+        headers: {...headers(callTool), 'Mcp-Name': 'test/rpc-error'},
+        json: body(callTool, params: {Keys.name: 'test/rpc-error'}),
+      );
+      final error = decode(text)[Keys.error] as Map<String, Object?>;
+
+      expect(status, 500);
+      expect(error[Keys.code], error_code.SERVER_ERROR);
+      expect(error[Keys.message], 'Deliberate server error');
+      expect(error[Keys.data], {
+        'full': 'application detail',
+        'stack': 'application trace',
+        'request': body(callTool, params: {Keys.name: 'test/rpc-error'}),
+      });
     });
 
     test('maps an RpcException from a tool to its HTTP status', () async {
@@ -4299,6 +4373,19 @@ base class _HttpTestServer extends MCPServer
     registerRequestHandler<Request?, Result?>(
       'test/crash',
       (_) => throw StateError('This handler always crashes'),
+    );
+    registerTool(
+      Tool(name: 'test/crash-tool', inputSchema: ObjectSchema()),
+      (_) => throw StateError('This tool always crashes'),
+    );
+    registerTool(
+      Tool(name: 'test/rpc-error', inputSchema: ObjectSchema()),
+      (_) =>
+          throw RpcException(
+            error_code.SERVER_ERROR,
+            'Deliberate server error',
+            data: {'full': 'application detail', 'stack': 'application trace'},
+          ),
     );
     registerTool(
       Tool(name: 'test/capabilities', inputSchema: ObjectSchema()),

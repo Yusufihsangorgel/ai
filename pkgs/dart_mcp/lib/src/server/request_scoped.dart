@@ -75,6 +75,15 @@ typedef MCPServerFactory =
 /// [onNotification] are reported as uncaught errors and do not fail the
 /// exchange.
 ///
+/// [onHandlerError] takes the errors a request handler does not raise as an
+/// [RpcException], so a transport that a remote client reaches can keep them
+/// off the wire. A crashed tool then answers with a generic tool execution
+/// error and any other handler with a generic internal error, and an
+/// [RpcException] is returned unchanged either way. Errors thrown by
+/// [onHandlerError] are reported as uncaught errors and do not alter the
+/// response. Without it a handler error keeps whatever payload
+/// `package:json_rpc_2` attaches to it, including a Dart stack trace.
+///
 /// Requests from the server back to the client, such as `roots/list`, cannot
 /// be answered within a single-message exchange: they fail with an
 /// [RpcException] inside their handler, or with a [StateError] if the exchange
@@ -103,6 +112,7 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   MCPServerInitialization initialization,
   MCPServerFactory serverFactory, {
   void Function(Map<String, Object?> notification)? onNotification,
+  void Function(Object, StackTrace)? onHandlerError,
   FutureOr<RpcException?> Function(MCPServer server)? beforeDispatch,
 }) async {
   final object = JsonRpc2Object.fromMap(message);
@@ -141,8 +151,11 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   // through the same Peer validation and dispatch path as a wire connection.
   final inbound = StreamController<Map<String, Object?>>();
   final outbound = StreamController<Map<String, Object?>>();
-  final server = serverFactory(
-    StreamChannel.withCloseGuarantee(inbound.stream, outbound.sink),
+  final server = runWithRequestHandlerErrorReporter(
+    onHandlerError,
+    () => serverFactory(
+      StreamChannel.withCloseGuarantee(inbound.stream, outbound.sink),
+    ),
   );
 
   final isRequest = object.kind == JsonRpc2Kind.request;
