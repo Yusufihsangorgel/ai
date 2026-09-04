@@ -2970,6 +2970,20 @@ void main() {
       expect((servers.single as _HttpTestServer).listToolsCalls, 0);
     });
 
+    test('checks a later custom header after a match', () async {
+      final (status, _, text) = await post(
+        headers: callWithHeaderParamHeaders({
+          'Mcp-Param-Region': 'us-west1',
+          'Mcp-Param-Count': '7',
+        }),
+        json: callWithHeaderParam({'region': 'us-west1', 'count': 42}),
+      );
+      expect(status, 400);
+      expect(errorCode(text), McpErrorCodes.headerMismatch);
+      expect(errorMessage(text), contains('7'));
+      expect(errorMessage(text), contains('42'));
+    });
+
     test('rejects arguments that are not an object', () async {
       final (status, _, text) = await post(
         headers: callWithHeaderParamHeaders({'Mcp-Param-Region': 'us-west1'}),
