@@ -41,9 +41,10 @@ import 'server.dart';
 /// so answering on the header alone is what lets it receive the `supported`
 /// list it needs to renegotiate with.
 ///
-/// Notifications are acknowledged with `202 Accepted` and not dispatched,
-/// since this protocol revision defines no client-to-server notifications
-/// over HTTP. This handler reads the whole request body into memory. It does
+/// Notifications are dispatched with the context in their `_meta` envelope
+/// before they are acknowledged with `202 Accepted`. Their HTTP metadata
+/// headers are not validated because this revision does not define them.
+/// This handler reads the whole request body into memory. It does
 /// not read the `Origin` header. The specification requires a server to
 /// validate that header and answer with 403: the check needs deployment
 /// knowledge this handler does not have, so it belongs to the embedding
@@ -211,11 +212,31 @@ Future<void> handleStreamableHttpRequest(
   }
 
   if (object.kind == JsonRpc2Kind.notification) {
-    // This protocol revision defines no client-to-server notifications over
-    // HTTP, so there is no server to deliver them to. Acknowledge and drop.
-    // This acknowledgement deliberately precedes the header checks below:
-    // per the specification, "header requirements for notification POSTs are
-    // not defined by this revision".
+    late final MCPServerInitialization initialization;
+    try {
+      initialization = _notificationInitialization(decoded);
+    } on RpcException catch (rejection) {
+      return _reject(response, HttpStatus.badRequest, rejection, decoded);
+    }
+    try {
+      await handleRequestScopedMessage(
+        decoded,
+        initialization,
+        serverFactory,
+        onNotification: onNotification,
+      );
+    } catch (_) {
+      await _reject(
+        response,
+        HttpStatus.internalServerError,
+        RpcException(
+          error_code.INTERNAL_ERROR,
+          'The server failed to initialize',
+        ),
+        decoded,
+      );
+      rethrow;
+    }
     response
       ..statusCode = HttpStatus.accepted
       ..contentLength = 0;
@@ -729,6 +750,71 @@ class _Answer {
   void cancel() {
     _keepAlive?.cancel();
   }
+}
+
+/// Builds the request context carried by a notification body.
+MCPServerInitialization _notificationInitialization(
+  Map<String, Object?> notification,
+) {
+  final params = notification[Keys.params];
+  final meta = params is Map<String, Object?> ? params[Keys.meta] : null;
+  if (params is! Map<String, Object?> || meta is! Map<String, Object?>) {
+    throw RpcException.invalidParams(
+      'The notification requires a params.${Keys.meta} envelope object',
+    );
+  }
+  final bodyVersion = meta[Keys.protocolVersionMeta];
+  if (bodyVersion is! String) {
+    throw RpcException.invalidParams(
+      'The envelope requires a ${Keys.protocolVersionMeta} String',
+    );
+  }
+  final protocolVersion = ProtocolVersion.tryParse(bodyVersion);
+  if (protocolVersion == null ||
+      !_supportedVersions.contains(protocolVersion)) {
+    throw RpcException(
+      McpErrorCodes.unsupportedProtocolVersion,
+      'Unsupported protocol version',
+      data: {
+        Keys.supported: [
+          for (final supported in _supportedVersions) supported.versionString,
+        ],
+        Keys.requested: bodyVersion,
+      },
+    );
+  }
+  final capabilities = meta[Keys.clientCapabilitiesMeta];
+  if (capabilities is! Map<String, Object?>) {
+    throw RpcException.invalidParams(
+      'The envelope requires a ${Keys.clientCapabilitiesMeta} object',
+    );
+  }
+  final clientInfo = meta[Keys.clientInfoMeta];
+  if (clientInfo is! Map<String, Object?>?) {
+    throw RpcException.invalidParams(
+      'The envelope ${Keys.clientInfoMeta} must be an object',
+    );
+  }
+  final rawLogLevel = meta[Keys.logLevelMeta];
+  final logLevel =
+      rawLogLevel == null
+          ? null
+          : LoggingLevel.values.firstWhereOrNull(
+            (level) => level.name == rawLogLevel,
+          );
+  if (rawLogLevel != null && logLevel == null) {
+    throw RpcException.invalidParams(
+      'The envelope ${Keys.logLevelMeta} was "$rawLogLevel", which is not '
+      'one of the logging levels: '
+      '${LoggingLevel.values.map((level) => level.name).join(', ')}',
+    );
+  }
+  return MCPServerInitialization(
+    protocolVersion: protocolVersion,
+    clientCapabilities: ClientCapabilities.fromMap(capabilities),
+    clientInfo: clientInfo == null ? null : Implementation.fromMap(clientInfo),
+    logLevel: logLevel,
+  );
 }
 
 /// Writes [exception] serialized against [origin] as a JSON body with

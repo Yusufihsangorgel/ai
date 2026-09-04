@@ -36,6 +36,7 @@ const setLevel = SetLevelRequest.methodName;
 const subscribe = SubscribeRequest.methodName;
 const unsubscribe = UnsubscribeRequest.methodName;
 const rootsListChangedNotification = RootsListChangedNotification.methodName;
+const testNotification = 'notifications/test';
 
 /// The headers every POST carries, whatever its body is.
 const transportHeaders = {
@@ -2458,25 +2459,80 @@ void main() {
   });
 
   group('notifications and responses', () {
-    test('acknowledges a notification without headers or dispatch', () async {
+    test('dispatches a notification before acknowledging it', () async {
       final (status, _, text) = await post(
-        headers: transportHeaders,
-        json: {Keys.jsonrpc: '2.0', Keys.method: progressNotification},
+        headers: {'Content-Type': 'application/json'},
+        json: body(testNotification, id: null),
       );
       expect(status, 202);
       expect(text, isEmpty);
-      expect(servers, isEmpty);
+      expect(servers.single, isA<_HttpTestServer>());
+      expect((servers.single as _HttpTestServer).testNotifications, 1);
     });
 
     test('acknowledges an unknown notification', () async {
       final (status, _, text) = await post(
-        headers: headers('no/such/notification'),
-        json: {Keys.jsonrpc: '2.0', Keys.method: 'no/such/notification'},
+        headers: transportHeaders,
+        json: body('no/such/notification', id: null),
       );
       expect(status, 202);
       expect(text, isEmpty);
+      expect(servers, hasLength(1));
+    });
+
+    test('rejects a notification without request metadata', () async {
+      final (status, _, text) = await post(
+        headers: transportHeaders,
+        json: {Keys.jsonrpc: '2.0', Keys.method: testNotification},
+      );
+      expect(status, 400);
+      expect(errorCode(text), error_code.INVALID_PARAMS);
       expect(servers, isEmpty);
     });
+
+    test('rejects a notification with an invalid log level', () async {
+      final request = body(testNotification, id: null);
+      final params = request[Keys.params] as Map<String, Object?>;
+      final meta = params[Keys.meta] as Map<String, Object?>;
+      meta[Keys.logLevelMeta] = 'chatty';
+
+      final (status, _, text) = await post(
+        headers: {'Content-Type': 'application/json'},
+        json: request,
+      );
+
+      expect(status, 400);
+      expect(errorCode(text), error_code.INVALID_PARAMS);
+      expect(servers, isEmpty);
+    });
+
+    test(
+      'returns an error status when a notification cannot be accepted',
+      () async {
+        final failing = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => failing.close(force: true));
+        final failure = Completer<Object>();
+        failing.listen(
+          (request) => handleStreamableHttpRequest(
+            request,
+            (_) => throw StateError('no server today'),
+          ).onError<Object>((error, _) => failure.complete(error)),
+        );
+        final client = HttpClient();
+        addTearDown(client.close);
+        final request = await client.postUrl(
+          Uri.http('${failing.address.host}:${failing.port}', '/mcp'),
+        );
+        request.headers.contentType = ContentType.json;
+        request.write(jsonEncode(body(testNotification, id: null)));
+        final response = await request.close();
+        final text = await utf8.decodeStream(response);
+
+        expect(response.statusCode, 500);
+        expect(errorCode(text), error_code.INTERNAL_ERROR);
+        expect(await failure.future, isStateError);
+      },
+    );
 
     test('rejects a JSON-RPC response body', () async {
       final (status, _, text) = await post(
@@ -2641,7 +2697,7 @@ void main() {
       // that get a body back.
       final (status, _, text) = await post(
         headers: {'Content-Type': 'application/json'},
-        json: {Keys.jsonrpc: '2.0', Keys.method: progressNotification},
+        json: body(progressNotification, id: null),
       );
       expect(status, 202);
       expect(text, isEmpty);
@@ -4185,6 +4241,7 @@ base class _HttpTestServer extends MCPServer
     with LoggingSupport, ToolsSupport, SubscriptionsSupport {
   bool get _declaredSampling => clientCapabilities.sampling != null;
   int listToolsCalls = 0;
+  int testNotifications = 0;
 
   @override
   FutureOr<ListToolsResult> listTools([ListToolsRequest? request]) {
@@ -4199,6 +4256,9 @@ base class _HttpTestServer extends MCPServer
           version: '0.1.0',
         ),
       ) {
+    registerNotificationHandler(testNotification, (Notification? _) {
+      testNotifications++;
+    });
     registerTool(
       Tool(name: 'test/version', inputSchema: ObjectSchema()),
       (_) => CallToolResult(content: [TextContent(text: '1.2.3')]),
