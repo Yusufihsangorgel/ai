@@ -1,5 +1,7 @@
 ## 0.6.0-wip
 
+- Add `RequestStateCodec` for integrity-protected multi round-trip request
+  state with optional request binding and expiry.
 - Convert schema enum values and multi-select defaults to fixed-length lists so
   schemas built from sets or lazy iterables can be JSON encoded.
 - Split the Streamable HTTP implementation into client and server libraries
