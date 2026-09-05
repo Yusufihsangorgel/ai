@@ -149,6 +149,12 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
 
   final isRequest = object.kind == JsonRpc2Kind.request;
   final stateContext = List<int>.unmodifiable(requestStateContext);
+  final stateAssociatedData =
+      requestStateCodec != null &&
+              initialization.protocolVersion >= ProtocolVersion.v2026_07_28 &&
+              _inputRequiredMethods.contains(method)
+          ? _requestStateAssociatedData(message, method, stateContext)
+          : const <int>[];
   late final Map<String, Object?> dispatchMessage;
   try {
     dispatchMessage = _openRequestState(
@@ -218,11 +224,10 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
               if (refusal == null) {
                 protectedData = _sealRequestState(
                   data,
-                  message,
                   method,
                   initialization.protocolVersion,
                   requestStateCodec,
-                  stateContext,
+                  stateAssociatedData,
                 );
               }
               response.complete(
@@ -343,11 +348,10 @@ Map<String, Object?> _openRequestState(
 /// Returns [response] with its `input_required` state sealed, when configured.
 Map<String, Object?> _sealRequestState(
   Map<String, Object?> response,
-  Map<String, Object?> request,
   String method,
   ProtocolVersion protocolVersion,
   RequestStateCodec? codec,
-  List<int> context,
+  List<int> associatedData,
 ) {
   if (codec == null ||
       protocolVersion < ProtocolVersion.v2026_07_28 ||
@@ -365,10 +369,7 @@ Map<String, Object?> _sealRequestState(
     ...response,
     Keys.result: {
       ...result,
-      Keys.requestState: codec.seal(
-        state,
-        associatedData: _requestStateAssociatedData(request, method, context),
-      ),
+      Keys.requestState: codec.seal(state, associatedData: associatedData),
     },
   };
 }

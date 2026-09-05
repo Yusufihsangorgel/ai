@@ -24,6 +24,8 @@ final class RequestStateCodec {
   /// Creates a codec backed by [key].
   ///
   /// The key is copied and must contain at least [minimumKeyLength] bytes.
+  /// It must be kept secret and generated with a cryptographically secure
+  /// random number generator.
   /// The default [timeToLive] is ten minutes. Pass `null` to omit expiry.
   /// The default [maxStateLength] is four MiB. The default [clock] reads the
   /// current system time. Pass a function to control time in tests.
