@@ -50,11 +50,15 @@ void main() {
   late StreamController<Map<String, Object?>> subscriptionNotifications;
   final servers = <MCPServer>[];
   final notifications = <Map<String, Object?>>[];
+  RequestStateCodec? requestStateCodec;
+  List<int> requestStateContext = const [];
 
   setUp(() async {
     serverFactory = _HttpTestServer.new;
     servers.clear();
     notifications.clear();
+    requestStateCodec = null;
+    requestStateContext = const [];
     subscriptionNotifications = StreamController.broadcast(sync: true);
     httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     uri = Uri.http('${httpServer.address.host}:${httpServer.port}', '/mcp');
@@ -72,6 +76,8 @@ void main() {
         },
         subscriptionNotifications: subscriptionNotifications.stream,
         listenKeepAliveInterval: const Duration(milliseconds: 50),
+        requestStateCodec: requestStateCodec,
+        requestStateContext: requestStateContext,
       ),
     );
     addTearDown(() async {
@@ -189,6 +195,50 @@ void main() {
   /// The JSON body of a raw response, cut out of its framing.
   String jsonBody(String response) =>
       response.substring(response.indexOf('{'), response.lastIndexOf('}') + 1);
+
+  test('passes request-state protection through HTTP', () async {
+    requestStateCodec = RequestStateCodec(List<int>.generate(32, (i) => i));
+    requestStateContext = const [1];
+    final first = await post(
+      headers: {...headers(callTool), 'Mcp-Name': 'test/request-state'},
+      json: body(callTool, params: {Keys.name: 'test/request-state'}),
+    );
+    expect(first.$1, HttpStatus.ok, reason: first.$3);
+    final firstResult = decode(first.$3)[Keys.result] as Map<String, Object?>;
+    final state = firstResult[Keys.requestState] as String;
+
+    expect(state, isNot('phase=complete'));
+
+    requestStateContext = const [2];
+    final rejected = await post(
+      headers: {...headers(callTool), 'Mcp-Name': 'test/request-state'},
+      json: body(
+        callTool,
+        id: 2,
+        params: {Keys.name: 'test/request-state', Keys.requestState: state},
+      ),
+    );
+
+    expect(rejected.$1, HttpStatus.badRequest);
+    expect(errorCode(rejected.$3), error_code.INVALID_PARAMS);
+
+    requestStateContext = const [1];
+    final accepted = await post(
+      headers: {...headers(callTool), 'Mcp-Name': 'test/request-state'},
+      json: body(
+        callTool,
+        id: 3,
+        params: {Keys.name: 'test/request-state', Keys.requestState: state},
+      ),
+    );
+    expect(accepted.$1, HttpStatus.ok, reason: accepted.$3);
+    final acceptedResult =
+        decode(accepted.$3)[Keys.result] as Map<String, Object?>;
+
+    expect(acceptedResult[Keys.content], [
+      containsPair(Keys.text, 'phase=complete'),
+    ]);
+  });
 
   group('client channel', () {
     test('posts request metadata and emits the JSON response', () async {
@@ -4202,6 +4252,15 @@ base class _HttpTestServer extends MCPServer
     registerTool(
       Tool(name: 'test/version', inputSchema: ObjectSchema()),
       (_) => CallToolResult(content: [TextContent(text: '1.2.3')]),
+    );
+    registerTool(
+      Tool(name: 'test/request-state', inputSchema: ObjectSchema()),
+      (request) =>
+          request.requestState == null
+              ? InputRequiredResult(requestState: 'phase=complete')
+              : CallToolResult(
+                content: [TextContent(text: request.requestState!)],
+              ),
     );
     registerTool(
       Tool(

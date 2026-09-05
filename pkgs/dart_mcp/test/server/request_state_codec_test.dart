@@ -126,6 +126,16 @@ void main() {
       expect(() => codec.open(state), throwsFormatException);
     });
 
+    test('accepts state without expiry', () {
+      final issuedAt = DateTime.utc(2026);
+      var now = issuedAt;
+      final codec = RequestStateCodec(_key, timeToLive: null, clock: () => now);
+      final state = codec.seal('kept');
+
+      now = issuedAt.add(const Duration(days: 365));
+      expect(codec.open(state), 'kept');
+    });
+
     test('accepts state at the length limit', () {
       final now = DateTime.utc(2026);
       final state = _sealedAt(now);
@@ -310,6 +320,21 @@ void main() {
       expect(states, ['${CallToolRequest.methodName}:initial']);
     });
 
+    test('rejects non-string state before dispatch', () async {
+      final states = <String>[];
+      final rejected = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state', Keys.requestState: 1},
+        states,
+        codec: RequestStateCodec(_key),
+      );
+      final error = rejected![Keys.error] as Map<String, Object?>;
+
+      expect(error[Keys.code], error_code.INVALID_PARAMS);
+      expect(error[Keys.message], RequestStateCodec.invalidMessage);
+      expect(states, isEmpty);
+    });
+
     test('binds state to the caller context and original request', () async {
       final states = <String>[];
       final codec = RequestStateCodec(_key);
@@ -382,12 +407,82 @@ void main() {
       ]);
     });
 
+    test('binds state to its request method', () async {
+      final states = <String>[];
+      final codec = RequestStateCodec(_key);
+      final first = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state'},
+        states,
+        codec: codec,
+      );
+      final result = first![Keys.result] as Map<String, Object?>;
+      final protectedState = result[Keys.requestState] as String;
+
+      final rejected = await _dispatchStateRequest(
+        GetPromptRequest.methodName,
+        {Keys.name: 'state', Keys.requestState: protectedState},
+        states,
+        codec: codec,
+        id: 2,
+      );
+
+      expect(rejected, contains(Keys.error));
+      expect(states, ['${CallToolRequest.methodName}:initial']);
+    });
+
+    test('ignores retry inputs and metadata when binding state', () async {
+      final states = <String>[];
+      final codec = RequestStateCodec(_key);
+      final first = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state'},
+        states,
+        codec: codec,
+      );
+      final result = first![Keys.result] as Map<String, Object?>;
+      final protectedState = result[Keys.requestState] as String;
+
+      final retried = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {
+          Keys.name: 'state',
+          Keys.inputResponses: <String, Object?>{},
+          Keys.requestState: protectedState,
+          Keys.meta: {'trace': 'changed'},
+        },
+        states,
+        codec: codec,
+        id: 2,
+      );
+
+      expect(retried, isNot(contains(Keys.error)));
+      expect(states, [
+        '${CallToolRequest.methodName}:initial',
+        '${CallToolRequest.methodName}:phase=complete',
+      ]);
+    });
+
     test('leaves state unchanged when protection is not configured', () async {
       final states = <String>[];
       final response = await _dispatchStateRequest(CallToolRequest.methodName, {
         Keys.name: 'state',
         Keys.requestState: 'plain',
       }, states);
+
+      expect(response, isNot(contains(Keys.error)));
+      expect(states, ['${CallToolRequest.methodName}:plain']);
+    });
+
+    test('leaves state unchanged before the protocol revision', () async {
+      final states = <String>[];
+      final response = await _dispatchStateRequest(
+        CallToolRequest.methodName,
+        {Keys.name: 'state', Keys.requestState: 'plain'},
+        states,
+        codec: RequestStateCodec(_key),
+        protocolVersion: ProtocolVersion.v2025_11_25,
+      );
 
       expect(response, isNot(contains(Keys.error)));
       expect(states, ['${CallToolRequest.methodName}:plain']);
@@ -450,10 +545,11 @@ Future<Map<String, Object?>?> _dispatchStateRequest(
   RequestStateCodec? codec,
   List<int> context = const [],
   Object id = 1,
+  ProtocolVersion protocolVersion = ProtocolVersion.v2026_07_28,
 }) => handleRequestScopedMessage(
   {Keys.jsonrpc: '2.0', Keys.id: id, Keys.method: method, Keys.params: params},
   MCPServerInitialization(
-    protocolVersion: ProtocolVersion.v2026_07_28,
+    protocolVersion: protocolVersion,
     clientCapabilities: ClientCapabilities(),
   ),
   (channel) => _RequestScopedStateServer(channel, states),
