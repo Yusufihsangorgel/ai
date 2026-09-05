@@ -51,7 +51,7 @@ void main() {
   final servers = <MCPServer>[];
   final notifications = <Map<String, Object?>>[];
   RequestStateCodec? requestStateCodec;
-  List<int> requestStateContext = const [];
+  var requestStateContext = const <int>[];
 
   setUp(() async {
     serverFactory = _HttpTestServer.new;
