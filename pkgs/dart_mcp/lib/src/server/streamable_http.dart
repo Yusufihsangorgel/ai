@@ -99,11 +99,12 @@ import 'server.dart';
 /// change produced by one request's server to reach another request's listen
 /// stream.
 ///
-/// [requestStateCodec] enables automatic protection for state carried by
-/// multi round-trip tool, prompt, and resource requests. The handler returns
+/// Passing [requestStateCodec] enables automatic protection for state carried
+/// by multi round-trip tool, prompt, and resource requests. The handler returns
 /// the payload it wants back, and receives that payload again only after the
-/// codec verifies the client's value. [requestStateContext] can bind the state
-/// to the authenticated caller and must be stable across the retry sequence.
+/// codec verifies the client's value. Callers can use [requestStateContext] to
+/// bind the state to the authenticated caller. The context must be stable
+/// across the retry sequence.
 Future<void> handleStreamableHttpRequest(
   HttpRequest request,
   MCPServerFactory serverFactory, {

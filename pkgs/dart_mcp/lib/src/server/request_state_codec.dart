@@ -9,8 +9,9 @@ import 'package:crypto/crypto.dart';
 /// Adds integrity protection to multi round-trip `requestState` values.
 ///
 /// A client sends these values back without reading them. A server must still
-/// treat the returned value as untrusted input. [seal] adds an HMAC-SHA256 tag
-/// and [open] rejects modified, expired, or incorrectly bound values.
+/// treat the returned value as untrusted input. The [seal] method adds an
+/// HMAC-SHA256 tag and [open] rejects modified, expired, or incorrectly bound
+/// values.
 ///
 /// Callers can bind a value to the authenticated caller and the original
 /// request with `associatedData`. Pass the same bytes to [seal] and [open].
@@ -24,8 +25,8 @@ final class RequestStateCodec {
   ///
   /// The key is copied and must contain at least [minimumKeyLength] bytes.
   /// The default [timeToLive] is ten minutes. Pass `null` to omit expiry.
-  /// [maxStateLength] defaults to four MiB. [clock] defaults to the current
-  /// system time and can provide controlled time in tests.
+  /// The default [maxStateLength] is four MiB. The default [clock] reads the
+  /// current system time. Pass a function to control time in tests.
   RequestStateCodec(
     List<int> key, {
     this.timeToLive = const Duration(minutes: 10),

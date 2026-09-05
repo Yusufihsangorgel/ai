@@ -1,7 +1,8 @@
 ## 0.6.0-wip
 
-- Add opt-in request-state protection for request-scoped tool, prompt, and
-  resource handlers, with request binding and expiry.
+- Add `RequestStateCodec` for request-state integrity checks and optional
+  expiry, with request binding in request-scoped tool, prompt, and resource
+  handlers.
 - Convert schema enum values and multi-select defaults to fixed-length lists so
   schemas built from sets or lazy iterables can be JSON encoded.
 - Split the Streamable HTTP implementation into client and server libraries

@@ -92,7 +92,7 @@ typedef MCPServerFactory =
 /// When [requestStateCodec] is given, this function seals the `requestState`
 /// in an `input_required` result and verifies it before a retry reaches the
 /// server. The verified payload, not the sealed value, reaches the handler.
-/// [requestStateContext] is included in both operations alongside the method
+/// Both operations include [requestStateContext] alongside the method
 /// and the original parameters, excluding retry inputs and metadata. An HTTP
 /// server can use it to bind state to the authenticated caller. It must remain
 /// the same for the initial request and its retries.
