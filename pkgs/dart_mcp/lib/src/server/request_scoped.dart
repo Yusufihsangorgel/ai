@@ -149,6 +149,7 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
   final server = serverFactory(
     StreamChannel.withCloseGuarantee(inbound.stream, outbound.sink),
   );
+  server._serverRequestsSupported = routeServerRequests && onRequest != null;
 
   final isRequest = object.kind == JsonRpc2Kind.request;
   final response = Completer<Map<String, Object?>?>();
@@ -334,8 +335,8 @@ Map<String, Object?> _errorResponse(Object? id, String message) =>
 /// https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr.
 ///
 /// An undeclared capability is refused with [_missingClientCapability], the
-/// error [MCPServer.listRoots] and [ElicitationRequestSupport.elicit] raise for
-/// the same request on a connected transport, which
+/// error the server-side roots and elicitation helpers raise for the same
+/// request on a connected transport, which
 /// `handleStreamableHttpRequest` in `package:dart_mcp/streamable_http.dart`
 /// maps to HTTP 400 while it can still send a JSON response.
 ///
