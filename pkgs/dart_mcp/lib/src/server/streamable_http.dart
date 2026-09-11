@@ -52,10 +52,11 @@ import 'server.dart';
 /// goes unread and the check stays with the embedding HTTP server, along with
 /// authentication.
 ///
-/// [allowedHosts] is the same kind of list for the `Host` header. A request
-/// naming a host the list leaves out gets a 403, and a request sending no
-/// `Host` line at all gets the same answer. Leaving [allowedHosts] off keeps
-/// the header unread.
+/// [allowedHosts] is the same kind of list for the `Host` header. This
+/// revision asks for no such check; the list is there for a deployment that
+/// knows the names it answers to. A request naming a host the list leaves out
+/// gets a 403, and a request sending no `Host` line at all gets the same
+/// answer. Leaving [allowedHosts] off keeps the header unread.
 ///
 /// Responses produced by the dispatched server are written unchanged, so an
 /// error a request handler throws reaches the client with whatever payload
