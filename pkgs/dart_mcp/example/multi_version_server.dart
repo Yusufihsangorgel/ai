@@ -131,15 +131,19 @@ base class MCPServerWithInputRequired extends MCPServer with ToolsSupport {
   /// The implementation of the `greet` tool, asking for a name on the first
   /// call and greeting the answer the second call carries.
   CallToolResponse _greet(CallToolRequest request) {
-    if (request.elicitResponse('name') case final answer?) {
-      // `decline` and `cancel` both leave the tool without a name.
-      final accepted = answer.action == ElicitationAction.accept;
-      final name = accepted ? answer.content!['name'] : null;
+    if (request.elicitResult('name') case final answer?) {
+      // `decline` and `cancel` both leave the tool without a name, as does an
+      // `accept` that carries no content.
+      final content =
+          answer.action == ElicitationAction.accept ? answer.content : null;
+      final name = content?['name'];
       return CallToolResult(
         content: [
-          Content.text(text: accepted ? 'Hello, $name!' : 'Nothing to greet.'),
+          Content.text(
+            text: name == null ? 'Nothing to greet.' : 'Hello, $name!',
+          ),
         ],
-        isError: !accepted,
+        isError: name == null,
       );
     }
     final askForAName = ElicitRequest.form(
