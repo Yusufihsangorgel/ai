@@ -51,6 +51,7 @@ void main() {
   late MCPServerFactory serverFactory;
   late StreamController<Map<String, Object?>> subscriptionNotifications;
   Set<String>? allowedOrigins;
+  Set<String>? allowedHosts;
   final servers = <MCPServer>[];
   final notifications = <Map<String, Object?>>[];
 
@@ -74,6 +75,7 @@ void main() {
         subscriptionNotifications: subscriptionNotifications.stream,
         listenKeepAliveInterval: const Duration(milliseconds: 50),
         allowedOrigins: allowedOrigins,
+        allowedHosts: allowedHosts,
       ),
     );
     addTearDown(() async {
@@ -85,6 +87,7 @@ void main() {
   tearDown(() {
     servers.clear();
     allowedOrigins = null;
+    allowedHosts = null;
     notifications.clear();
   });
 
@@ -1988,6 +1991,89 @@ void main() {
       expect(status, HttpStatus.forbidden);
       expect(text, isEmpty);
       expect(servers, isEmpty);
+    });
+  });
+
+  group('host validation', () {
+    /// A raw POST carrying [hostLines] in place of one `Host` line.
+    Future<String> postWithHostLines(List<String> hostLines) async {
+      final requestBody = jsonEncode(body(listTools));
+      return rawRequest(
+        'POST /mcp HTTP/1.1\r\n'
+        '${hostLines.map((line) => 'Host: $line\r\n').join()}'
+        'Content-Type: application/json\r\n'
+        'Accept: application/json, text/event-stream\r\n'
+        'Mcp-Protocol-Version: $version\r\n'
+        'Mcp-Method: $listTools\r\n'
+        'Content-Length: ${requestBody.length}\r\n'
+        'Connection: close\r\n'
+        '\r\n'
+        '$requestBody',
+      );
+    }
+
+    test('serves a request carrying a host with no allowlist', () async {
+      final (status, _, text) = await post(
+        headers: headers(listTools),
+        json: body(listTools),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('accepts a host in the allowlist', () async {
+      allowedHosts = {uri.authority};
+      final (status, _, text) = await post(
+        headers: headers(listTools),
+        json: body(listTools),
+      );
+      expect(status, 200);
+      expect(errorCode(text), isNull);
+    });
+
+    test('rejects a host outside the allowlist', () async {
+      allowedHosts = {'myapp.local'};
+      final (status, _, text) = await post(
+        headers: headers(listTools),
+        json: body(listTools),
+      );
+      expect(status, HttpStatus.forbidden);
+      expect(text, isEmpty);
+      expect(servers, isEmpty);
+    });
+
+    test('rejects any host when the allowlist is empty', () async {
+      allowedHosts = {};
+      final (status, _, text) = await post(
+        headers: headers(listTools),
+        json: body(listTools),
+      );
+      expect(status, HttpStatus.forbidden);
+      expect(text, isEmpty);
+      expect(servers, isEmpty);
+    });
+
+    test('rejects a request carrying no host line', () async {
+      allowedHosts = {uri.authority};
+      expect(await postWithHostLines([]), startsWith('HTTP/1.1 403'));
+      expect(servers, isEmpty);
+    });
+
+    test('serves a request carrying no host line with no allowlist', () async {
+      final response = await postWithHostLines([]);
+      expect(response, startsWith('HTTP/1.1 200'));
+      expect(errorCode(jsonBody(response)), isNull);
+    });
+
+    test('checks the last host line when a request repeats it', () async {
+      // dart:io keeps the last value for this header, so the repeated lines
+      // the origin check turns down cannot reach the host check as a pair.
+      // The first line is the one left out of the allowlist here, which only
+      // the last value being checked can answer with a 200.
+      allowedHosts = {'b.example'};
+      final response = await postWithHostLines(['a.example', 'b.example']);
+      expect(response, startsWith('HTTP/1.1 200'));
+      expect(errorCode(jsonBody(response)), isNull);
     });
   });
 

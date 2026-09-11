@@ -52,6 +52,15 @@ import 'server.dart';
 /// goes unread and the check stays with the embedding HTTP server, along with
 /// authentication.
 ///
+/// [allowedHosts] carries the same kind of list for the `Host` header. The
+/// rebinding guidance of this revision names only `Origin`, but a rebound
+/// request reaches this handler with the attacker's name in `Host`, and a
+/// deployment that knows the names it answers to can turn down the rest.
+/// This check differs from the origin one on a missing header: HTTP/1.1
+/// requires the `Host` line, dart:io serves a request that omits it anyway,
+/// and a list that let such a request through would be worth little. Leaving
+/// [allowedHosts] off keeps the header unread.
+///
 /// Responses produced by the dispatched server are written unchanged, so an
 /// error a request handler throws reaches the client with whatever payload
 /// `package:json_rpc_2` attached to it, including a Dart stack trace for
@@ -116,6 +125,7 @@ Future<void> handleStreamableHttpRequest(
   Duration listenKeepAliveInterval = const Duration(seconds: 15),
   int maxRequestBodyBytes = 4 * 1024 * 1024,
   Set<String>? allowedOrigins,
+  Set<String>? allowedHosts,
 }) async {
   RangeError.checkNotNegative(maxRequestBodyBytes, 'maxRequestBodyBytes');
   final response = request.response;
@@ -135,6 +145,21 @@ Future<void> handleStreamableHttpRequest(
     final origins = request.headers['origin'];
     if (origins != null &&
         (origins.length != 1 || !allowedOrigins.contains(origins.single))) {
+      response
+        ..statusCode = HttpStatus.forbidden
+        ..contentLength = 0;
+      await response.close();
+      return;
+    }
+  }
+
+  if (allowedHosts != null) {
+    // dart:io holds one value for this header even when the request repeats
+    // the line, so there is no repeated shape to turn down the way the origin
+    // check above turns one down. A request carrying no line at all is turned
+    // down instead, since dart:io hands one over rather than refusing it.
+    final host = request.headers.value(HttpHeaders.hostHeader);
+    if (host == null || !allowedHosts.contains(host)) {
       response
         ..statusCode = HttpStatus.forbidden
         ..contentLength = 0;
