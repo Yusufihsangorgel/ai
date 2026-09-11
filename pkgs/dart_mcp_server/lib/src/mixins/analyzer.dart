@@ -88,9 +88,9 @@ base mixin DartAnalyzerSupport
       );
 
   @override
-  FutureOr<InitializeResult> initialize(InitializeRequest request) async {
+  FutureOr<void> initialize(MCPServerInitialization initialization) async {
     // This should come first, assigns `clientCapabilities`.
-    final result = await super.initialize(request);
+    await super.initialize(initialization);
 
     // We check for requirements and store a message to log after initialization
     // if some requirement isn't satisfied.
@@ -117,8 +117,6 @@ base mixin DartAnalyzerSupport
         }
       }),
     );
-
-    return result;
   }
 
   @visibleForTesting

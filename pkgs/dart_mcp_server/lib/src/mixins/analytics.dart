@@ -17,19 +17,20 @@ base mixin AnalyticsEvents
   @override
   /// Tracks [initialize] calls, so we can detect clients that connect but
   /// never interact with the server directly.
-  Future<InitializeResult> initialize(InitializeRequest request) async {
-    final result = await super.initialize(request);
+  Future<void> initialize(MCPServerInitialization initialization) async {
+    // This comes first, so the event carries the client implementation.
+    await super.initialize(initialization);
     analytics?.send(
       _createDartMCPEvent(
         type: AnalyticsEvent.initialize.name,
         additionalData: InitializeMetrics(
-          supportsElicitation: request.capabilities.elicitation != null,
-          supportsRoots: request.capabilities.roots != null,
-          supportsSampling: request.capabilities.sampling != null,
+          supportsElicitation:
+              initialization.clientCapabilities.elicitation != null,
+          supportsRoots: initialization.clientCapabilities.roots != null,
+          supportsSampling: initialization.clientCapabilities.sampling != null,
         ),
       ),
     );
-    return result;
   }
 
   @override
@@ -41,13 +42,18 @@ base mixin AnalyticsEvents
   }
 
   @override
-  Future<GetPromptResult> getPrompt(GetPromptRequest request) async {
+  Future<GetPromptResponse> getPrompt(GetPromptRequest request) async {
     final watch = Stopwatch()..start();
-    GetPromptResult? result;
+    GetPromptResponse? response;
     try {
-      return result = await super.getPrompt(request);
+      return response = await super.getPrompt(request);
     } finally {
       watch.stop();
+      // A response asking for input carries no messages, so it counts the way
+      // a thrown error does.
+      final result = response == null || response.isInputRequired
+          ? null
+          : response as GetPromptResult;
       trySendAnalyticsEvent(
         _createDartMCPEvent(
           type: AnalyticsEvent.getPrompt.name,
@@ -93,18 +99,18 @@ base mixin AnalyticsEvents
   /// purposes.
   void registerTool(
     Tool tool,
-    FutureOr<CallToolResult> Function(CallToolRequest) impl, {
+    FutureOr<CallToolResponse> Function(CallToolRequest) impl, {
     bool validateArguments = true,
   }) {
     super.registerTool(tool, (request) async {
       final watch = Stopwatch()..start();
-      CallToolResult? result;
+      CallToolResponse? response;
       if (validateArguments) {
         final errors = tool.inputSchema.validate(
           request.arguments ?? const <String, Object?>{},
         );
         if (errors.isNotEmpty) {
-          result = CallToolResult(
+          response = CallToolResult(
             content: [
               Content.text(
                 text:
@@ -121,7 +127,7 @@ base mixin AnalyticsEvents
       String? errorType;
       try {
         // Only call the tool if we don't already have an error result.
-        return result ??= await impl(request);
+        return response ??= await impl(request);
       } catch (e) {
         errorType = e.runtimeType.toString();
         rethrow;
@@ -132,6 +138,11 @@ base mixin AnalyticsEvents
             case final String command) {
           toolName += '.$command';
         }
+        // A response asking for input has not finished the call, so it counts
+        // the way a thrown error does.
+        final result = response == null || response.isInputRequired
+            ? null
+            : response as CallToolResult;
         trySendAnalyticsEvent(
           _createDartMCPEvent(
             type: AnalyticsEvent.callTool.name,
@@ -157,8 +168,8 @@ base mixin AnalyticsEvents
     required String type,
     CustomMetrics? additionalData,
   }) => Event.dartMCPEvent(
-    client: clientInfo.name,
-    clientVersion: clientInfo.version,
+    client: clientInfo?.name ?? unknownClient,
+    clientVersion: clientInfo?.version ?? unknownClient,
     serverVersion: implementation.version,
     type: type,
     agentPlugin: agentPlugin,
