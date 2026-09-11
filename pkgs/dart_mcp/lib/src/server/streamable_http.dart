@@ -52,14 +52,10 @@ import 'server.dart';
 /// goes unread and the check stays with the embedding HTTP server, along with
 /// authentication.
 ///
-/// [allowedHosts] carries the same kind of list for the `Host` header. The
-/// rebinding guidance of this revision names only `Origin`, but a rebound
-/// request reaches this handler with the attacker's name in `Host`, and a
-/// deployment that knows the names it answers to can turn down the rest.
-/// This check differs from the origin one on a missing header: HTTP/1.1
-/// requires the `Host` line, dart:io serves a request that omits it anyway,
-/// and a list that let such a request through would be worth little. Leaving
-/// [allowedHosts] off keeps the header unread.
+/// [allowedHosts] is the same kind of list for the `Host` header. A request
+/// naming a host the list leaves out gets a 403, and a request sending no
+/// `Host` line at all gets the same answer. Leaving [allowedHosts] off keeps
+/// the header unread.
 ///
 /// Responses produced by the dispatched server are written unchanged, so an
 /// error a request handler throws reaches the client with whatever payload
@@ -154,10 +150,8 @@ Future<void> handleStreamableHttpRequest(
   }
 
   if (allowedHosts != null) {
-    // dart:io holds one value for this header even when the request repeats
-    // the line, so there is no repeated shape to turn down the way the origin
-    // check above turns one down. A request carrying no line at all is turned
-    // down instead, since dart:io hands one over rather than refusing it.
+    // dart:io keeps a single value for this header, replacing it when a
+    // request repeats the line. A request with no line at all is refused.
     final host = request.headers.value(HttpHeaders.hostHeader);
     if (host == null || !allowedHosts.contains(host)) {
       response

@@ -2066,10 +2066,8 @@ void main() {
     });
 
     test('checks the last host line when a request repeats it', () async {
-      // dart:io keeps the last value for this header, so the repeated lines
-      // the origin check turns down cannot reach the host check as a pair.
-      // The first line is the one left out of the allowlist here, which only
-      // the last value being checked can answer with a 200.
+      // The allowlist holds only the second line, and a 200 answer pins
+      // dart:io keeping the last value for this header.
       allowedHosts = {'b.example'};
       final response = await postWithHostLines(['a.example', 'b.example']);
       expect(response, startsWith('HTTP/1.1 200'));
