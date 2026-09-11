@@ -106,6 +106,20 @@ void main() {
     ]);
   });
 
+  test('an empty string nextCursor is a cursor, not the end', () async {
+    server.pages = [
+      ['a'],
+      ['b'],
+    ];
+    server.emptyCursor = true;
+
+    expect(await connection.listAllTools().map((tool) => tool.name).toList(), [
+      'a',
+      'b',
+    ]);
+    expect(server.cursors, [null, Cursor('')]);
+  });
+
   test('an invalid cursor on a later page propagates', () async {
     server.pages = [
       ['a'],
@@ -289,6 +303,9 @@ final class _PagingServer extends TestMCPServer {
   /// Whether pages alternate between the first two cursors and never end.
   bool alternateCursors = false;
 
+  /// Whether the first page reports an empty string as its next cursor.
+  bool emptyCursor = false;
+
   /// Whether every page sends a progress notification for the request's token.
   bool sendProgress = false;
 
@@ -320,12 +337,16 @@ final class _PagingServer extends TestMCPServer {
       return _indexOf(cursor) == 0 ? cursorFor(1) : cursorFor(0);
     }
     final next = _indexOf(cursor) + 1;
+    if (emptyCursor && next == 1) return Cursor('');
     return next < pages.length ? cursorFor(next) : null;
   }
 
-  /// The index into [pages] that [cursor] names.
-  int _indexOf(Cursor? cursor) =>
-      cursor == null
-          ? 0
-          : int.parse((cursor as String).substring(cursorPrefix.length));
+  /// The index into [pages] that [cursor] names, where the empty cursor
+  /// [emptyCursor] hands out names the second page.
+  int _indexOf(Cursor? cursor) {
+    if (cursor == null) return 0;
+    final value = cursor as String;
+    if (value.isEmpty) return 1;
+    return int.parse(value.substring(cursorPrefix.length));
+  }
 }
