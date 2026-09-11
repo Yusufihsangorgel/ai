@@ -49,13 +49,13 @@ base mixin FlutterLauncherSupport
   };
 
   @override
-  FutureOr<InitializeResult> initialize(InitializeRequest request) {
+  FutureOr<void> initialize(MCPServerInitialization initialization) {
     registerTool(launchAppTool, _launchApp);
     registerTool(stopAppTool, _stopApp);
     registerTool(listDevicesTool, _listDevices);
     registerTool(getAppLogsTool, _getAppLogs);
     registerTool(listRunningAppsTool, _listRunningApps);
-    return super.initialize(request);
+    return super.initialize(initialization);
   }
 
   @visibleForTesting

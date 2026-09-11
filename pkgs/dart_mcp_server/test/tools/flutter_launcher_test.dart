@@ -441,8 +441,8 @@ void main() {
               (e) => e.eventData,
               'eventData',
               equals({
-                'client': server.clientInfo.name,
-                'clientVersion': server.clientInfo.version,
+                'client': server.clientInfo!.name,
+                'clientVersion': server.clientInfo!.version,
                 'serverVersion': server.implementation.version,
                 'type': AnalyticsEvent.callTool.name,
                 'tool': 'launch_app',

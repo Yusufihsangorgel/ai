@@ -27,9 +27,9 @@ base mixin GrepSupport
     on ToolsSupport, RootsTrackingSupport, ElicitationRequestSupport
     implements FileSystemSupport, ProcessManagerSupport {
   @override
-  FutureOr<InitializeResult> initialize(InitializeRequest request) {
+  FutureOr<void> initialize(MCPServerInitialization initialization) {
     registerTool(ripGrepPackagesTool, _ripGrepPackages);
-    return super.initialize(request);
+    return super.initialize(initialization);
   }
 
   @visibleForTesting
@@ -252,9 +252,10 @@ base mixin GrepSupport
     Directory? installDir,
     ProgressToken? progressToken,
   }) async {
-    // If the client does not support elicitation, we cannot install ripgrep
-    // because we can't get consent.
-    if (clientCapabilities.elicitation == null) return null;
+    // If the client cannot answer a form elicitation, we cannot install
+    // ripgrep because we can't get consent. `elicit` answers a mode the
+    // client did not declare with an error, which `callTool` rethrows.
+    if (!supportsFormElicitation) return null;
     final meta = progressToken != null
         ? MetaWithProgressToken(progressToken: progressToken)
         : null;

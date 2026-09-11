@@ -55,9 +55,9 @@ base mixin RootsFallbackSupport on ToolsSupport, RootsTrackingSupport {
       StreamController<RootsListChangedNotification?>.broadcast();
 
   @override
-  FutureOr<InitializeResult> initialize(InitializeRequest request) async {
+  FutureOr<void> initialize(MCPServerInitialization initialization) async {
     try {
-      return await super.initialize(request);
+      return await super.initialize(initialization);
     } finally {
       registerTool(rootsTool, _roots);
     }
