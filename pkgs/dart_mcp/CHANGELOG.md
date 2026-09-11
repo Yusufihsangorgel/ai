@@ -1,5 +1,8 @@
 ## 0.6.0-wip
 
+- Validate the `Origin` header against `allowedOrigins` on
+  `handleStreamableHttpRequest`, answering 403 when a request carries one the
+  list leaves out. Leaving the argument off keeps the header unread.
 - Add `ServerConnection.listAllTools`, `listAllResources`,
   `listAllResourceTemplates` and `listAllPrompts`, which walk the pages of
   each list request and yield the items as a `Stream`. The single-page
