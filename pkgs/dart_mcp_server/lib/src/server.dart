@@ -126,7 +126,7 @@ package.
   static Future<int> run(
     List<String> args, {
     Analytics? analytics,
-    StreamChannel<String>? channel,
+    StreamChannel<Map<String, Object?>>? channel,
   }) async {
     final parsedArgs = argParser.parse(args);
     if (parsedArgs.flag(helpFlag)) {
@@ -194,7 +194,7 @@ package.
   /// Only actually registers the tools enabled by [featuresConfig].
   void registerTool(
     Tool tool,
-    FutureOr<CallToolResult> Function(CallToolRequest) impl, {
+    FutureOr<CallToolResponse> Function(CallToolRequest) impl, {
     bool validateArguments = true,
   }) {
     if (!featuresConfig.isEnabled(
@@ -211,7 +211,7 @@ package.
   /// Only actually registers the prompts enabled by [featuresConfig].
   void addPrompt(
     Prompt prompt,
-    FutureOr<GetPromptResult> Function(GetPromptRequest) impl,
+    FutureOr<GetPromptResponse> Function(GetPromptRequest) impl,
   ) {
     if (!featuresConfig.isEnabled(
       prompt.name,

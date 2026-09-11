@@ -28,9 +28,9 @@ base mixin PubDevSupport on ToolsSupport {
   final _client = Client();
 
   @override
-  FutureOr<InitializeResult> initialize(InitializeRequest request) {
+  FutureOr<void> initialize(MCPServerInitialization initialization) {
     registerTool(pubDevTool, _runPubDevSearch);
-    return super.initialize(request);
+    return super.initialize(initialization);
   }
 
   @visibleForTesting

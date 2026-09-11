@@ -83,7 +83,7 @@ base mixin DartToolingDaemonSupport
   /// Can only be accessed after `initialize` has been called.
   String get clientId {
     if (_clientId != null) return _clientId!;
-    final clientName = clientInfo.title ?? clientInfo.name;
+    final clientName = clientInfo?.title ?? clientInfo?.name ?? unknownClient;
     _clientId = generateClientId(clientName);
     return _clientId!;
   }
@@ -163,8 +163,8 @@ base mixin DartToolingDaemonSupport
       try {
         analytics?.send(
           ua.Event.dartMCPEvent(
-            client: clientInfo.name,
-            clientVersion: clientInfo.version,
+            client: clientInfo?.name ?? unknownClient,
+            clientVersion: clientInfo?.version ?? unknownClient,
             serverVersion: implementation.version,
             type: AnalyticsEvent.readResource.name,
             agentPlugin: agentPlugin,
@@ -223,7 +223,7 @@ base mixin DartToolingDaemonSupport
   }
 
   @override
-  FutureOr<InitializeResult> initialize(InitializeRequest request) async {
+  FutureOr<void> initialize(MCPServerInitialization initialization) async {
     registerTool(dtdTool, _dtd);
     registerTool(getRuntimeErrorsTool, runtimeErrors);
     registerTool(getActiveLocationTool, _getActiveLocation);
@@ -233,7 +233,7 @@ base mixin DartToolingDaemonSupport
     registerTool(flutterDriverTool, _callFlutterDriver);
     registerTool(vmServiceTool, _vmService);
 
-    return super.initialize(request);
+    return super.initialize(initialization);
   }
 
   @visibleForTesting
