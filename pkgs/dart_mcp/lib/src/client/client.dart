@@ -614,11 +614,11 @@ base class ServerConnection extends MCPBase {
     request?.cursor,
   );
 
-  /// Yields the items of each [methodName] page, sending the next request
-  /// only once the current page's items are consumed.
+  /// Yields each [methodName] page's items, requesting the next page only
+  /// once the current one is consumed.
   ///
-  /// [pageRequest] builds the request for one [Cursor], and [itemsOf] reads a
-  /// page's items. Pages share one progress token, closed when the walk ends.
+  /// [pageRequest] builds one page's request; [itemsOf] reads its items. All
+  /// pages share one progress token, closed at the end.
   Stream<T> _listAllPages<T, R extends PaginatedResult>(
     String methodName,
     Request Function(Cursor? cursor) pageRequest,
