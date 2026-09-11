@@ -562,88 +562,100 @@ base class ServerConnection extends MCPBase {
   Future<ListPromptsResult> listPrompts([ListPromptsRequest? request]) =>
       sendRequest(ListPromptsRequest.methodName, request);
 
-  /// Every [Tool] on this server, by walking `tools/list` pages until one
+  /// Every [Tool] on this server, walking `tools/list` pages until one reports
+  /// no `nextCursor`.
+  ///
+  /// [request] supplies the first page's cursor and the metadata every page
+  /// carries. [maxPages] caps the pages requested, failing with a
+  /// [StateError].
+  Stream<Tool> listAllTools([ListToolsRequest? request, int? maxPages]) =>
+      _listAllPages(
+        ListToolsRequest.methodName,
+        (cursor) => ListToolsRequest(cursor: cursor, meta: request?.meta),
+        (ListToolsResult page) => page.tools,
+        request?.cursor,
+        maxPages,
+      );
+
+  /// Every [Resource] on this server, walking `resources/list` pages until one
   /// reports no `nextCursor`.
   ///
   /// [request] supplies the first page's cursor and the metadata every page
-  /// carries.
-  Stream<Tool> listAllTools([ListToolsRequest? request]) => _listAllPages(
-    ListToolsRequest.methodName,
-    (cursor) => ListToolsRequest(cursor: cursor, meta: request?.meta),
-    (ListToolsResult page) => page.tools,
+  /// carries. [maxPages] caps the pages requested, failing with a
+  /// [StateError].
+  Stream<Resource> listAllResources([
+    ListResourcesRequest? request,
+    int? maxPages,
+  ]) => _listAllPages(
+    ListResourcesRequest.methodName,
+    (cursor) => ListResourcesRequest(cursor: cursor, meta: request?.meta),
+    (ListResourcesResult page) => page.resources,
     request?.cursor,
+    maxPages,
   );
 
-  /// Every [Resource] on this server, by walking `resources/list` pages until
-  /// one reports no `nextCursor`.
-  ///
-  /// [request] supplies the first page's cursor and the metadata every page
-  /// carries.
-  Stream<Resource> listAllResources([ListResourcesRequest? request]) =>
-      _listAllPages(
-        ListResourcesRequest.methodName,
-        (cursor) => ListResourcesRequest(cursor: cursor, meta: request?.meta),
-        (ListResourcesResult page) => page.resources,
-        request?.cursor,
-      );
-
-  /// Every [ResourceTemplate] on this server, by walking
+  /// Every [ResourceTemplate] on this server, walking
   /// `resources/templates/list` pages until one reports no `nextCursor`.
   ///
   /// [request] supplies the first page's cursor and the metadata every page
-  /// carries.
+  /// carries. [maxPages] caps the pages requested, failing with a
+  /// [StateError].
   Stream<ResourceTemplate> listAllResourceTemplates([
     ListResourceTemplatesRequest? request,
+    int? maxPages,
   ]) => _listAllPages(
     ListResourceTemplatesRequest.methodName,
     (cursor) =>
         ListResourceTemplatesRequest(cursor: cursor, meta: request?.meta),
     (ListResourceTemplatesResult page) => page.resourceTemplates,
     request?.cursor,
+    maxPages,
   );
 
-  /// Every [Prompt] on this server, by walking `prompts/list` pages until one
+  /// Every [Prompt] on this server, walking `prompts/list` pages until one
   /// reports no `nextCursor`.
   ///
   /// [request] supplies the first page's cursor and the metadata every page
-  /// carries.
-  Stream<Prompt> listAllPrompts([ListPromptsRequest? request]) => _listAllPages(
-    ListPromptsRequest.methodName,
-    (cursor) => ListPromptsRequest(cursor: cursor, meta: request?.meta),
-    (ListPromptsResult page) => page.prompts,
-    request?.cursor,
-  );
+  /// carries. [maxPages] caps the pages requested, failing with a
+  /// [StateError].
+  Stream<Prompt> listAllPrompts([ListPromptsRequest? request, int? maxPages]) =>
+      _listAllPages(
+        ListPromptsRequest.methodName,
+        (cursor) => ListPromptsRequest(cursor: cursor, meta: request?.meta),
+        (ListPromptsResult page) => page.prompts,
+        request?.cursor,
+        maxPages,
+      );
 
-  /// Yields each [methodName] page's items, requesting the next page only
-  /// once the current one is consumed.
+  /// Yields each [methodName] page's items, requesting a page only when the
+  /// last is consumed.
   ///
-  /// [pageRequest] builds one page's request; [itemsOf] reads its items. All
-  /// pages share one progress token, closed at the end.
+  /// [pageRequest] builds one page's request; [itemsOf] reads its items;
+  /// [maxPages] bounds it. Pages share one progress token, closed at the end.
   Stream<T> _listAllPages<T, R extends PaginatedResult>(
     String methodName,
     Request Function(Cursor? cursor) pageRequest,
     List<T> Function(R page) itemsOf,
     Cursor? cursor,
+    int? maxPages,
   ) async* {
     var request = pageRequest(cursor);
+    var pagesRequested = 0;
     try {
       while (true) {
         final page = await sendRequestKeepingProgress<R>(methodName, request);
+        pagesRequested++;
         for (final item in itemsOf(page)) {
           yield item;
         }
         final next = page.nextCursor;
         if (next == null) return;
-        if (next == cursor) {
-          // A server handing back the cursor it was given would loop here
-          // forever, and stopping quietly would drop the rest of the listing.
-          throw StateError(
-            '$methodName returned the cursor it was given ("$next"), so its '
-            'pages do not end.',
-          );
+        if (maxPages != null && pagesRequested >= maxPages) {
+          // A cursor's value says nothing about where the listing ends, so a
+          // server that keeps handing out cursors is stopped by this count.
+          throw StateError('$methodName did not stop after $maxPages pages.');
         }
-        cursor = next;
-        request = pageRequest(cursor);
+        request = pageRequest(next);
       }
     } finally {
       await closeProgress(request);

@@ -158,16 +158,40 @@ void main() {
     ]);
   });
 
-  test('a repeated cursor stops the walk with an error', () async {
+  test('maxPages stops a walk the server never ends', () async {
     server.pages = [
       ['a'],
     ];
     server.repeatCursor = true;
 
     await expectLater(
-      connection.listAllTools().toList(),
+      connection.listAllTools(null, 3).toList(),
       throwsA(isA<StateError>()),
     );
+    expect(server.cursors, [
+      null,
+      _PagingServer.cursorFor(0),
+      _PagingServer.cursorFor(0),
+    ]);
+  });
+
+  test('maxPages stops a server that alternates two cursors', () async {
+    server.pages = [
+      ['a'],
+      ['b'],
+    ];
+    server.alternateCursors = true;
+
+    await expectLater(
+      connection.listAllTools(null, 4).toList(),
+      throwsA(isA<StateError>()),
+    );
+    expect(server.cursors, [
+      null,
+      _PagingServer.cursorFor(1),
+      _PagingServer.cursorFor(0),
+      _PagingServer.cursorFor(1),
+    ]);
   });
 
   test('every page carries the progress token and it closes once', () async {
@@ -262,6 +286,9 @@ final class _PagingServer extends TestMCPServer {
   /// Whether every page reports the cursor it was given as its next one.
   bool repeatCursor = false;
 
+  /// Whether pages alternate between the first two cursors and never end.
+  bool alternateCursors = false;
+
   /// Whether every page sends a progress notification for the request's token.
   bool sendProgress = false;
 
@@ -289,6 +316,9 @@ final class _PagingServer extends TestMCPServer {
   /// The cursor of the page after the one [cursor] names, if there is one.
   Cursor? _nextCursor(Cursor? cursor) {
     if (repeatCursor) return cursor ?? cursorFor(0);
+    if (alternateCursors) {
+      return _indexOf(cursor) == 0 ? cursorFor(1) : cursorFor(0);
+    }
     final next = _indexOf(cursor) + 1;
     return next < pages.length ? cursorFor(next) : null;
   }
