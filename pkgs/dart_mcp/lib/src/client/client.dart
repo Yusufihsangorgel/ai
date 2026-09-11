@@ -562,6 +562,94 @@ base class ServerConnection extends MCPBase {
   Future<ListPromptsResult> listPrompts([ListPromptsRequest? request]) =>
       sendRequest(ListPromptsRequest.methodName, request);
 
+  /// Every [Tool] on this server, by walking `tools/list` pages until one
+  /// reports no `nextCursor`.
+  ///
+  /// [request] supplies the first page's cursor and the metadata every page
+  /// carries.
+  Stream<Tool> listAllTools([ListToolsRequest? request]) => _listAllPages(
+    ListToolsRequest.methodName,
+    (cursor) => ListToolsRequest(cursor: cursor, meta: request?.meta),
+    (ListToolsResult page) => page.tools,
+    request?.cursor,
+  );
+
+  /// Every [Resource] on this server, by walking `resources/list` pages until
+  /// one reports no `nextCursor`.
+  ///
+  /// [request] supplies the first page's cursor and the metadata every page
+  /// carries.
+  Stream<Resource> listAllResources([ListResourcesRequest? request]) =>
+      _listAllPages(
+        ListResourcesRequest.methodName,
+        (cursor) => ListResourcesRequest(cursor: cursor, meta: request?.meta),
+        (ListResourcesResult page) => page.resources,
+        request?.cursor,
+      );
+
+  /// Every [ResourceTemplate] on this server, by walking
+  /// `resources/templates/list` pages until one reports no `nextCursor`.
+  ///
+  /// [request] supplies the first page's cursor and the metadata every page
+  /// carries.
+  Stream<ResourceTemplate> listAllResourceTemplates([
+    ListResourceTemplatesRequest? request,
+  ]) => _listAllPages(
+    ListResourceTemplatesRequest.methodName,
+    (cursor) =>
+        ListResourceTemplatesRequest(cursor: cursor, meta: request?.meta),
+    (ListResourceTemplatesResult page) => page.resourceTemplates,
+    request?.cursor,
+  );
+
+  /// Every [Prompt] on this server, by walking `prompts/list` pages until one
+  /// reports no `nextCursor`.
+  ///
+  /// [request] supplies the first page's cursor and the metadata every page
+  /// carries.
+  Stream<Prompt> listAllPrompts([ListPromptsRequest? request]) => _listAllPages(
+    ListPromptsRequest.methodName,
+    (cursor) => ListPromptsRequest(cursor: cursor, meta: request?.meta),
+    (ListPromptsResult page) => page.prompts,
+    request?.cursor,
+  );
+
+  /// Yields the items of each [methodName] page, sending the next request
+  /// only once the current page's items are consumed.
+  ///
+  /// [pageRequest] builds the request for one [Cursor], and [itemsOf] reads a
+  /// page's items. Pages share one progress token, closed when the walk ends.
+  Stream<T> _listAllPages<T, R extends PaginatedResult>(
+    String methodName,
+    Request Function(Cursor? cursor) pageRequest,
+    List<T> Function(R page) itemsOf,
+    Cursor? cursor,
+  ) async* {
+    var request = pageRequest(cursor);
+    try {
+      while (true) {
+        final page = await sendRequestKeepingProgress<R>(methodName, request);
+        for (final item in itemsOf(page)) {
+          yield item;
+        }
+        final next = page.nextCursor;
+        if (next == null) return;
+        if (next == cursor) {
+          // A server handing back the cursor it was given would loop here
+          // forever, and stopping quietly would drop the rest of the listing.
+          throw StateError(
+            '$methodName returned the cursor it was given ("$next"), so its '
+            'pages do not end.',
+          );
+        }
+        cursor = next;
+        request = pageRequest(cursor);
+      }
+    } finally {
+      await closeProgress(request);
+    }
+  }
+
   /// Gets the requested [Prompt] from the server.
   Future<GetPromptResult> getPrompt(GetPromptRequest request) =>
       sendRequestWithInputs(GetPromptRequest.methodName, request);
