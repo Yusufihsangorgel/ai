@@ -66,31 +66,35 @@ Future<void> _serveStreamableHttp() async {
     }
   });
 
-  print('''
+  print(
+    '''
 Listening on $endpoint
 
 # `greet` asks who to greet. This first call answers `input_required`.
-${_callGreet(endpoint, '')}
-# The client answers and calls again, under the key the result asked on. A
-# stdio client is asked for the same thing as an `elicitation/create` request.
-${_callGreet(endpoint, '\n      "inputResponses": {"name": $_accepted},')}''');
+${_callGreet(endpoint, 1, '')}
+# The client answers and calls again, under the key the result asked on. The
+# retry is an independent request, so it carries a new `id`. A stdio client is
+# asked for the same thing as an `elicitation/create` request.
+${_callGreet(endpoint, 2, '\n      "inputResponses": {"name": $_accepted},')}''',
+  );
 }
 
 /// An accepted form elicitation, as a client sends one back.
 const _accepted = '{"action": "accept", "content": {"name": "world"}}';
 
-/// The `curl` command calling `greet` on [endpoint] with [inputResponses].
+/// The `curl` command calling `greet` on [endpoint] as [id], with
+/// [inputResponses].
 ///
 /// The `_meta` envelope replaces the `initialize` handshake on this revision,
 /// and the capabilities it carries have to cover what the tool asks for.
-String _callGreet(String endpoint, String inputResponses) => '''
+String _callGreet(String endpoint, int id, String inputResponses) => '''
 curl -sS $endpoint \\
   -H 'Content-Type: application/json' \\
   -H 'Accept: application/json, text/event-stream' \\
   -H 'MCP-Protocol-Version: 2026-07-28' \\
   -H 'Mcp-Method: tools/call' -H 'Mcp-Name: greet' \\
   -d '{
-    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+    "jsonrpc": "2.0", "id": $id, "method": "tools/call",
     "params": {
       "name": "greet",$inputResponses
       "_meta": {
