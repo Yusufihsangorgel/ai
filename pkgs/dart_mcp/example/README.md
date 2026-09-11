@@ -14,11 +14,11 @@ tools, connected to the example server that provides tools
 a `curl` command which calls its tool. `streamableHttpClientChannel` in
 `package:dart_mcp/streamable_http.dart` is the client transport.
 
-`multi_version_server.dart` has no client pair either. Run it directly and its
-tool asks for a name over stdio, where a client on an older revision answers an
-`elicitation/create` request. Run it with `--http` and it prints two `curl`
-commands that ask a 2026-07-28 client for the same name with an
-`input_required` result.
+`multi_version_server.dart` and `multi_version_client.dart` are a pair. The
+client spawns the server over stdio and answers the `elicitation/create`
+request that this package converts the tool's `input_required` result into.
+Run the server with `--http` and it prints two `curl` commands that ask a
+2026-07-28 client for the same name with an `input_required` result.
 
 # Full Featured Examples
 

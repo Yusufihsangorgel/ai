@@ -2,21 +2,15 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-/// A server that serves one tool to clients on the 2026-07-28 revision and to
-/// clients on the revisions before it, from one [MCPServer] subclass.
+/// One [MCPServer] subclass, serving one tool to 2026-07-28 clients and to
+/// clients on the revisions before it.
 ///
-/// Run `dart run example/multi_version_server.dart` for stdio, where the older
-/// revisions are: [ProtocolVersion.latestSupported] on a connected transport
-/// is 2025-11-25. Add `--http` and the same class is served over Streamable
-/// HTTP, the transport 2026-07-28 added, and it prints two `curl` commands
-/// that drive it.
-///
-/// [MCPServerWithInputRequired] is written once, for 2026-07-28: a tool that
-/// needs something from the user answers with an [InputRequiredResult] and
-/// reads the answer back out of the call it gets again. On stdio this package
-/// sends that request as the `elicitation/create` an older revision has and
-/// reruns the handler with the answer under the same key. The handler never
-/// reads [MCPServer.protocolVersion].
+/// With no arguments it serves stdio, where
+/// `example/multi_version_client.dart` drives it. With `--http` it serves the
+/// same class over Streamable HTTP, the transport 2026-07-28 added, and prints
+/// two `curl` commands. The tool answers with an [InputRequiredResult] either
+/// way; on stdio this package sends that as the `elicitation/create` an older
+/// client has.
 library;
 
 import 'dart:io' as io;
@@ -34,19 +28,28 @@ void main(List<String> args) async {
 /// Serves [MCPServerWithInputRequired] over Streamable HTTP on a free port.
 ///
 /// `example/streamable_http_server.dart` is the example for this transport and
-/// explains the host's part of it. The path and `Origin` checks are the same,
-/// and the handler leaves both to its embedder.
+/// explains why the host checks the path and the `Origin` header itself.
 Future<void> _serveStreamableHttp() async {
   const path = '/mcp';
   final server = await io.HttpServer.bind(io.InternetAddress.loopbackIPv4, 0);
   final endpoint = 'http://${server.address.host}:${server.port}$path';
 
   server.listen((request) async {
-    final wrongPath = request.uri.path != path;
-    if (wrongPath || request.headers['origin'] != null) {
+    // The handler reads no path; the one this server answers on is the host's
+    // to choose and to enforce.
+    if (request.uri.path != path) {
       request.response
-        ..statusCode =
-            wrongPath ? io.HttpStatus.notFound : io.HttpStatus.forbidden
+        ..statusCode = io.HttpStatus.notFound
+        ..contentLength = 0;
+      await request.response.close();
+      return;
+    }
+
+    // No `Origin` is valid here: nothing in this example is meant to be
+    // driven from a page. The peer example explains what that check is for.
+    if (request.headers['origin'] != null) {
+      request.response
+        ..statusCode = io.HttpStatus.forbidden
         ..contentLength = 0;
       await request.response.close();
       return;
@@ -93,7 +96,9 @@ curl -sS $endpoint \\
       "_meta": {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientInfo": {"name": "curl", "version": "0"},
-        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}}
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {"form": {}}
+        }
       }
     }
   }'
@@ -101,6 +106,9 @@ curl -sS $endpoint \\
 
 /// A server with one tool that needs a value from the user before it can
 /// answer.
+///
+/// The tool is written once, for 2026-07-28, and never reads
+/// [MCPServer.protocolVersion].
 base class MCPServerWithInputRequired extends MCPServer with ToolsSupport {
   MCPServerWithInputRequired(super.channel)
     : super.fromStreamChannel(
