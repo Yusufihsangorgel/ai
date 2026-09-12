@@ -52,6 +52,8 @@ dev_dependencies:
 executables:
   dart_mcp_server: dart_mcp_server
 
+# Remove before publishing: the `dart_mcp: ^0.6.0` constraint above only
+# resolves through this override until 0.6.0 itself is on pub.
 dependency_overrides:
   dart_mcp:
     path: ../dart_mcp
