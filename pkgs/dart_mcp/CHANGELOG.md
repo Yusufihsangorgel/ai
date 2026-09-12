@@ -19,7 +19,9 @@
   messages. Progress sent before its request starts, after its response, or
   after cancellation is dropped. The handler keeps running because it still
   cannot see its request ID. `MCPBase.cancellations` reports valid
-  notifications so subclasses can log their reasons.
+  notifications so subclasses can log their reasons. A server cancellation
+  terminates the matching pending `subscriptions/listen` request locally; a
+  later response is ignored.
   On servers, `maxRetainedCancellations` bounds cancelled requests whose
   responses have not arrived. Exceeding the bound closes the connection
   instead of forgetting a cancellation; zero closes on the first live

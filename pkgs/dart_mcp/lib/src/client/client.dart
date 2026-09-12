@@ -120,6 +120,9 @@ base class MCPClient {
 base class ServerConnection extends MCPBase {
   final _responseCache = _ClientResponseCache();
 
+  @override
+  bool get peerCancellationsTargetOutgoingRequests => true;
+
   /// The number of stored responses on this connection.
   @visibleForTesting
   int get cachedResponseCount => _responseCache._entries.length;

@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:async/async.dart' show StreamSinkTransformer;
+import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:meta/meta.dart';
 import 'package:stream_channel/stream_channel.dart';
@@ -56,6 +57,12 @@ base class MCPBase {
   /// How many unanswered cancellations this connection retains.
   final int _maxRetainedCancellations;
 
+  /// IDs of `subscriptions/listen` requests this side sent.
+  final _outgoingSubscriptionRequests = <Object>{};
+
+  /// Outgoing subscriptions the peer's current notification cancels.
+  final _cancelledOutgoingSubscriptions = <Object>{};
+
   final _cancellations = StreamController<CancelledNotification>.broadcast();
 
   /// Connects a handler invocation to the request observed at the channel edge.
@@ -79,7 +86,8 @@ base class MCPBase {
   /// registering a handler of its own.
   ///
   /// A notification naming a request this side is not answering appears here
-  /// too, because the ID may belong to a request this side sent. The
+  /// too, because the ID may belong to a request this side sent: a server
+  /// cancels the `subscriptions/listen` request it tears down. The
   /// specification's "ignore" for an unknown ID, an already answered request
   /// and a malformed notification means no error response and no change to
   /// what goes on the wire, not that the notification is hidden from this
@@ -96,6 +104,10 @@ base class MCPBase {
 
   /// Whether the connection with the peer is active.
   bool get isActive => !_peer.isClosed;
+
+  /// Whether peer cancellations can only target requests this side sent.
+  @protected
+  bool get peerCancellationsTargetOutgoingRequests => false;
 
   /// Completes after [shutdown] is called.
   Future<void> get done => _done.future;
@@ -146,6 +158,8 @@ base class MCPBase {
     _inFlightRequests.clear();
     _cancelledRequests.clear();
     _requestsByProgressToken.clear();
+    _outgoingSubscriptionRequests.clear();
+    _cancelledOutgoingSubscriptions.clear();
     final progressControllers = _progressControllers.values.toList();
     _progressControllers.clear();
     await Future.wait([
@@ -276,6 +290,8 @@ base class MCPBase {
     final Object? id = notification.requestId;
     if (id == null || (id is! String && id is! num)) return;
     _cancellations.add(notification);
+    final cancelledOutgoing = _cancelledOutgoingSubscriptions.remove(id);
+    if (cancelledOutgoing || peerCancellationsTargetOutgoingRequests) return;
     if (!_inFlightRequests.containsKey(id) || _cancelledRequests.contains(id)) {
       return;
     }
@@ -310,7 +326,25 @@ base class MCPBase {
                   message = _trackIncomingRequest(message, object.id!);
                 }
               case JsonRpc2Kind.notification:
+                Map<String, Object?>? cancelledResponse;
+                if (message[Keys.jsonrpc] == '2.0' &&
+                    message[Keys.method] == CancelledNotification.methodName) {
+                  final id = _cancelledRequestId(message);
+                  if (id != null && _outgoingSubscriptionRequests.remove(id)) {
+                    _cancelledOutgoingSubscriptions.add(id);
+                    cancelledResponse = _subscriptionCancelledResponse(
+                      message,
+                      id,
+                    );
+                  }
+                }
+                sink.add(message);
+                if (cancelledResponse != null) sink.add(cancelledResponse);
+                return;
               case JsonRpc2Kind.response:
+                if (_validResponse(message)) {
+                  _outgoingSubscriptionRequests.remove(object.id);
+                }
             }
             sink.add(message);
           },
@@ -337,6 +371,11 @@ base class MCPBase {
                 final token = (params as WithProgressToken).progressToken;
                 if (token != null && !_progressIsActive(token)) return;
               case JsonRpc2Kind.request:
+                final id = object.id;
+                if (object.method == SubscriptionsListenRequest.methodName &&
+                    id != null) {
+                  _outgoingSubscriptionRequests.add(id);
+                }
                 break;
             }
             sink.add(message);
@@ -401,6 +440,46 @@ base class MCPBase {
     if (id is! String && id is! num) return false;
     final params = message[Keys.params];
     return !message.containsKey(Keys.params) || params is Map || params is List;
+  }
+
+  /// The valid request ID in a cancellation [message], if any.
+  Object? _cancelledRequestId(Map<String, Object?> message) {
+    final params = message[Keys.params];
+    if (params is! Map<String, Object?>) return null;
+    final id = params[Keys.requestId];
+    return id is String || id is num ? id : null;
+  }
+
+  /// Whether [message] is a response the JSON-RPC client accepts.
+  bool _validResponse(Map<String, Object?> message) {
+    if (message[Keys.jsonrpc] != '2.0') return false;
+    final id = message[Keys.id];
+    if (id is! String && id is! num) return false;
+    if (message.containsKey(Keys.result)) return true;
+    final error = message[Keys.error];
+    return error is Map &&
+        error[Keys.code] is int &&
+        error[Keys.message] is String;
+  }
+
+  /// Completes a locally pending subscription request as cancelled.
+  Map<String, Object?> _subscriptionCancelledResponse(
+    Map<String, Object?> cancellation,
+    Object id,
+  ) {
+    final params = cancellation[Keys.params];
+    final reason = params is Map<String, Object?> ? params[Keys.reason] : null;
+    return {
+      Keys.jsonrpc: '2.0',
+      Keys.id: id,
+      Keys.error: {
+        Keys.code: error_code.SERVER_ERROR,
+        Keys.message:
+            reason is String
+                ? 'The server cancelled the subscription: $reason'
+                : 'The server cancelled the subscription.',
+      },
+    };
   }
 
   /// Handles [ProgressNotification]s and forwards them to the streams returned

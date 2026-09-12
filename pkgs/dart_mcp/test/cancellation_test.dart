@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 import 'package:json_rpc_2/error_code.dart' as error_code;
+import 'package:json_rpc_2/json_rpc_2.dart' show RpcException;
 import 'package:stream_channel/stream_channel.dart';
 import 'package:test/test.dart';
 
@@ -438,6 +439,148 @@ void main() {
     },
   );
 
+  test('a server cancellation terminates its pending listen request', () async {
+    final harness = _ClientHarness();
+    final request = SubscriptionsListenRequest(
+      notifications: SubscriptionFilter(toolsListChanged: true),
+      meta: MetaWithProgressToken(progressToken: ProgressToken('listen')),
+    );
+    final cancellation = harness.connection.cancellations.first;
+    final progressDone = expectLater(
+      harness.connection.onProgress(request),
+      emitsDone,
+    );
+    final pending = harness.connection.sendRequest<SubscriptionsListenResult>(
+      SubscriptionsListenRequest.methodName,
+      request,
+    );
+    final failed = expectLater(
+      pending,
+      throwsA(
+        isA<RpcException>().having(
+          (error) => error.message,
+          'message',
+          contains('subscription torn down'),
+        ),
+      ),
+    );
+    await pumpEventQueue();
+    final sent = harness.frames.singleWhere(
+      (frame) => frame['method'] == SubscriptionsListenRequest.methodName,
+    );
+    final id = sent['id']!;
+
+    harness.client.listRootsCalled = Completer<void>();
+    harness.client.finishListRoots = Completer<void>();
+    harness.send({
+      'jsonrpc': '2.0',
+      'id': id,
+      'method': ListRootsRequest.methodName,
+      'params': ListRootsRequest() as Map<String, Object?>,
+    });
+    await harness.client.listRootsCalled.future;
+
+    harness.send({
+      'jsonrpc': '2.0',
+      'method': CancelledNotification.methodName,
+      'params':
+          CancelledNotification(
+                requestId: RequestId(id),
+                reason: 'subscription torn down',
+              )
+              as Map<String, Object?>,
+    });
+    expect((await cancellation).requestId, id);
+    await failed;
+    await progressDone;
+
+    harness.send({
+      'jsonrpc': '2.0',
+      'method': CancelledNotification.methodName,
+      'params':
+          CancelledNotification(requestId: RequestId(id))
+              as Map<String, Object?>,
+    });
+    await pumpEventQueue();
+
+    // Request IDs in the two directions are independent. The incoming roots
+    // request with the same ID was not the request the server cancelled.
+    harness.client.finishListRoots.complete();
+    await pumpEventQueue();
+    expect(
+      harness.frames.where(
+        (frame) => frame['id'] == id && frame.containsKey('result'),
+      ),
+      hasLength(1),
+    );
+
+    // A response which races behind the cancellation has no pending request
+    // left to complete and does not close the connection.
+    harness.send({
+      'jsonrpc': '2.0',
+      'id': id,
+      'result':
+          SubscriptionsListenResult(
+                meta: MetaWithSubscriptionId(subscriptionId: RequestId(id)),
+              )
+              as Map<String, Object?>,
+    });
+    await pumpEventQueue();
+    expect(harness.connection.isActive, isTrue);
+    expect(
+      harness.frames.where((frame) => frame.containsKey('error')),
+      isEmpty,
+    );
+  });
+
+  test('invalid envelopes do not terminate a pending listen request', () async {
+    final harness = _ClientHarness();
+    final pending = harness.connection.sendRequest<SubscriptionsListenResult>(
+      SubscriptionsListenRequest.methodName,
+      SubscriptionsListenRequest(
+        notifications: SubscriptionFilter(toolsListChanged: true),
+      ),
+    );
+    var completed = false;
+    final settled = pending.then<void>(
+      (_) => fail('The invalid envelopes completed the request.'),
+      onError: (Object error) {
+        expect(error, isA<RpcException>());
+        completed = true;
+      },
+    );
+    await pumpEventQueue();
+    final sent = harness.frames.singleWhere(
+      (frame) => frame['method'] == SubscriptionsListenRequest.methodName,
+    );
+    final id = sent['id']!;
+
+    harness.send({
+      'jsonrpc': 'invalid',
+      'method': CancelledNotification.methodName,
+      'params':
+          CancelledNotification(requestId: RequestId(id))
+              as Map<String, Object?>,
+    });
+    harness.send({
+      'jsonrpc': 'invalid',
+      'id': id,
+      'result': <String, Object?>{},
+    });
+    await pumpEventQueue();
+    expect(completed, isFalse);
+
+    harness.send({
+      'jsonrpc': '2.0',
+      'method': CancelledNotification.methodName,
+      'params':
+          CancelledNotification(requestId: RequestId(id))
+              as Map<String, Object?>,
+    });
+    await settled;
+    expect(completed, isTrue);
+  });
+
   test('a malformed method does not close the connection', () async {
     final harness = _Harness();
     await harness.initialize();
@@ -459,6 +602,42 @@ void main() {
     await pumpEventQueue();
     expect(harness.framesWithId(1), hasLength(1));
   });
+
+  test(
+    'a cancellation for another outgoing method leaves it pending',
+    () async {
+      final harness = _ClientHarness();
+      var completed = false;
+      final pending = harness.connection
+          .sendRequest<EmptyResult>(PingRequest.methodName)
+          .then((result) {
+            completed = true;
+            return result;
+          });
+      await pumpEventQueue();
+      final sent = harness.frames.singleWhere(
+        (frame) => frame['method'] == PingRequest.methodName,
+      );
+      final id = sent['id']!;
+
+      harness.send({
+        'jsonrpc': '2.0',
+        'method': CancelledNotification.methodName,
+        'params':
+            CancelledNotification(requestId: RequestId(id))
+                as Map<String, Object?>,
+      });
+      await pumpEventQueue();
+      expect(completed, isFalse);
+
+      harness.send({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': EmptyResult() as Map<String, Object?>,
+      });
+      expect(await pending, isA<EmptyResult>());
+    },
+  );
 
   test('progress for a cancelled request stays off the wire', () async {
     final harness = _Harness();
@@ -729,6 +908,103 @@ void main() {
       throwsRangeError,
     );
   });
+}
+
+/// A client on a raw JSON-RPC channel, built the way an embedder builds one,
+/// so a test can assert on the frames that do and do not reach the server.
+class _ClientHarness {
+  final _toClient = StreamController<Map<String, Object?>>();
+  final _fromClient = StreamController<Map<String, Object?>>();
+
+  /// Every frame the client has written.
+  final frames = <Map<String, Object?>>[];
+
+  late final _CancellationTestClient client;
+
+  /// The connection [client] opened, which is what the server talks to.
+  late final ServerConnection connection;
+
+  _ClientHarness() {
+    _fromClient.stream.listen(frames.add);
+    client = _CancellationTestClient();
+    connection = client.connectServer(
+      StreamChannel<Map<String, Object?>>.withCloseGuarantee(
+        _toClient.stream,
+        _fromClient.sink,
+      ),
+    );
+    addTearDown(() async {
+      if (!client.finishListRoots.isCompleted) {
+        client.finishListRoots.complete();
+      }
+      await client.shutdown();
+    });
+  }
+
+  /// Writes [frame] to the client as a server would.
+  void send(Map<String, Object?> frame) => _toClient.add(frame);
+
+  /// The response frames the client wrote for the request [id].
+  Iterable<Map<String, Object?>> framesWithId(Object id) =>
+      frames.where((frame) => frame['id'] == id);
+
+  /// The progress notifications the client wrote.
+  Iterable<Map<String, Object?>> get progressFrames => frames.where(
+    (frame) => frame['method'] == ProgressNotification.methodName,
+  );
+
+  /// Sends the client a `roots/list` request as [id] under [token], cancels it
+  /// while its handler is running, and releases the handler.
+  ///
+  /// A client answering a server's request is the role that reaches
+  /// [MCPClient.connectServer], so this fills the retention bound that call
+  /// passed on.
+  Future<void> cancelListRoots(Object id, String token) async {
+    client.listRootsCalled = Completer<void>();
+    final release = client.finishListRoots = Completer<void>();
+    send({
+      'jsonrpc': '2.0',
+      'id': id,
+      'method': ListRootsRequest.methodName,
+      'params': <String, Object?>{
+        '_meta': <String, Object?>{'progressToken': token},
+      },
+    });
+    await client.listRootsCalled.future;
+    send({
+      'jsonrpc': '2.0',
+      'method': CancelledNotification.methodName,
+      'params':
+          CancelledNotification(requestId: RequestId(id))
+              as Map<String, Object?>,
+    });
+    await pumpEventQueue();
+    release.complete();
+    await pumpEventQueue();
+    expect(framesWithId(id), isEmpty);
+  }
+}
+
+/// A client whose `roots/list` handler the test releases by hand.
+final class _CancellationTestClient extends MCPClient with RootsSupport {
+  _CancellationTestClient()
+    : super(Implementation(name: 'cancellation test client', version: '1.0.0'));
+
+  /// Completes when the roots handler has started.
+  ///
+  /// Replaced by [_ClientHarness.cancelListRoots] before each request it
+  /// drives.
+  Completer<void> listRootsCalled = Completer<void>();
+
+  /// Completed by the test to let the roots handler return.
+  Completer<void> finishListRoots = Completer<void>();
+
+  @override
+  Future<ListRootsResult> handleListRoots([ListRootsRequest? request]) async {
+    if (!listRootsCalled.isCompleted) listRootsCalled.complete();
+    await finishListRoots.future;
+    return super.handleListRoots(request);
+  }
 }
 
 /// A server on a raw JSON-RPC channel, so a test can assert on the frames
