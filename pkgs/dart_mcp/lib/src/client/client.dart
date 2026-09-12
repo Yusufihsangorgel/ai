@@ -568,7 +568,7 @@ base class ServerConnection extends MCPBase {
   /// [request] supplies the first page's cursor and the metadata every page
   /// carries. [maxPages] caps the pages requested, failing with a
   /// [StateError].
-  Stream<Tool> listAllTools([ListToolsRequest? request, int? maxPages]) =>
+  Stream<Tool> listAllTools({ListToolsRequest? request, int? maxPages}) =>
       _listAllPages(
         ListToolsRequest.methodName,
         (cursor) => ListToolsRequest(cursor: cursor, meta: request?.meta),
@@ -583,10 +583,10 @@ base class ServerConnection extends MCPBase {
   /// [request] supplies the first page's cursor and the metadata every page
   /// carries. [maxPages] caps the pages requested, failing with a
   /// [StateError].
-  Stream<Resource> listAllResources([
+  Stream<Resource> listAllResources({
     ListResourcesRequest? request,
     int? maxPages,
-  ]) => _listAllPages(
+  }) => _listAllPages(
     ListResourcesRequest.methodName,
     (cursor) => ListResourcesRequest(cursor: cursor, meta: request?.meta),
     (ListResourcesResult page) => page.resources,
@@ -600,10 +600,10 @@ base class ServerConnection extends MCPBase {
   /// [request] supplies the first page's cursor and the metadata every page
   /// carries. [maxPages] caps the pages requested, failing with a
   /// [StateError].
-  Stream<ResourceTemplate> listAllResourceTemplates([
+  Stream<ResourceTemplate> listAllResourceTemplates({
     ListResourceTemplatesRequest? request,
     int? maxPages,
-  ]) => _listAllPages(
+  }) => _listAllPages(
     ListResourceTemplatesRequest.methodName,
     (cursor) =>
         ListResourceTemplatesRequest(cursor: cursor, meta: request?.meta),
@@ -618,7 +618,7 @@ base class ServerConnection extends MCPBase {
   /// [request] supplies the first page's cursor and the metadata every page
   /// carries. [maxPages] caps the pages requested, failing with a
   /// [StateError].
-  Stream<Prompt> listAllPrompts([ListPromptsRequest? request, int? maxPages]) =>
+  Stream<Prompt> listAllPrompts({ListPromptsRequest? request, int? maxPages}) =>
       _listAllPages(
         ListPromptsRequest.methodName,
         (cursor) => ListPromptsRequest(cursor: cursor, meta: request?.meta),

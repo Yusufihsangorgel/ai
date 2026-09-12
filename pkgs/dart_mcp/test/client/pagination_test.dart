@@ -161,7 +161,9 @@ void main() {
 
     expect(
       await connection
-          .listAllTools(ListToolsRequest(cursor: _PagingServer.cursorFor(1)))
+          .listAllTools(
+            request: ListToolsRequest(cursor: _PagingServer.cursorFor(1)),
+          )
           .map((tool) => tool.name)
           .toList(),
       ['b', 'c'],
@@ -179,7 +181,7 @@ void main() {
     server.repeatCursor = true;
 
     await expectLater(
-      connection.listAllTools(null, 3).toList(),
+      connection.listAllTools(maxPages: 3).toList(),
       throwsA(isA<StateError>()),
     );
     expect(server.cursors, [
@@ -197,7 +199,7 @@ void main() {
     server.alternateCursors = true;
 
     await expectLater(
-      connection.listAllTools(null, 4).toList(),
+      connection.listAllTools(maxPages: 4).toList(),
       throwsA(isA<StateError>()),
     );
     expect(server.cursors, [
@@ -213,8 +215,8 @@ void main() {
       ['a'],
     ];
 
-    expect(() => connection.listAllTools(null, 0), throwsArgumentError);
-    expect(() => connection.listAllTools(null, -5), throwsArgumentError);
+    expect(() => connection.listAllTools(maxPages: 0), throwsArgumentError);
+    expect(() => connection.listAllTools(maxPages: -5), throwsArgumentError);
     expect(server.cursors, isEmpty);
   });
 
@@ -237,7 +239,10 @@ void main() {
         );
 
     expect(
-      await connection.listAllTools(request).map((tool) => tool.name).toList(),
+      await connection
+          .listAllTools(request: request)
+          .map((tool) => tool.name)
+          .toList(),
       ['a', 'b'],
     );
     await pumpEventQueue();
