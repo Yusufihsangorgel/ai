@@ -223,6 +223,35 @@ void main() {
     expect(server.cursors, isEmpty);
   });
 
+  test('maxPageCount equal to the page count completes', () async {
+    server.pages = [
+      ['a'],
+      ['b'],
+    ];
+
+    expect(
+      await connection
+          .listAllTools(maxPageCount: 2)
+          .map((tool) => tool.name)
+          .toList(),
+      ['a', 'b'],
+    );
+    expect(server.cursors, [null, _PagingServer.cursorFor(1)]);
+  });
+
+  test('maxPageCount stops listAllPrompts too', () async {
+    server.pages = [
+      ['a'],
+    ];
+    server.repeatCursor = true;
+
+    await expectLater(
+      connection.listAllPrompts(maxPageCount: 2).toList(),
+      throwsA(isA<StateError>()),
+    );
+    expect(server.cursors, [null, _PagingServer.cursorFor(0)]);
+  });
+
   test('the default bound stops a walk the server never ends', () async {
     server.pages = [
       ['a'],
