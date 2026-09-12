@@ -57,7 +57,20 @@ Future<T> callWithRetry<T>(
 ///   separate process.
 class TestHarness {
   final FakeEditorExtension? fakeEditorExtension;
-  final DartToolingMCPClient mcpClient;
+
+  /// The client connected to the server under test.
+  ///
+  /// This is a [DartToolingMCPClient] unless [start] was given a
+  /// `clientFactory` which builds something else.
+  final MCPClient client;
+
+  /// [client] as the default harness client.
+  ///
+  /// Throws if [start] was given a `clientFactory` which builds another kind
+  /// of client, which is also the only case where the roots and elicitation
+  /// helpers this getter reaches are not available.
+  DartToolingMCPClient get mcpClient => client as DartToolingMCPClient;
+
   final ServerConnectionPair serverConnectionPair;
   final FileSystem fileSystem;
   final Sdk sdk;
@@ -66,7 +79,7 @@ class TestHarness {
       serverConnectionPair.serverConnection;
 
   TestHarness._(
-    this.mcpClient,
+    this.client,
     this.serverConnectionPair,
     this.fakeEditorExtension,
     this.fileSystem,
@@ -95,6 +108,10 @@ class TestHarness {
   ///
   /// The [processManager] defaults to a [TestProcessManager], but you can
   /// override it to use a real [ProcessManager].
+  ///
+  /// The [clientFactory] defaults to [DartToolingMCPClient.new]. Pass another
+  /// one to drive the server from a client declaring different capabilities;
+  /// [mcpClient] then throws, and only [client] is available.
   static Future<TestHarness> start({
     bool inProcess = false,
     FileSystem? fileSystem,
@@ -103,12 +120,13 @@ class TestHarness {
     Sdk? sdk,
     bool startFakeEditorExtension = true,
     FeaturesConfiguration featuresConfig = const FeaturesConfiguration(),
+    MCPClient Function()? clientFactory,
   }) async {
     sdk ??= Sdk.find();
     fileSystem ??= const LocalFileSystem();
     processManager ??= TestProcessManager();
 
-    final mcpClient = DartToolingMCPClient();
+    final mcpClient = (clientFactory ?? DartToolingMCPClient.new)();
     addTearDown(mcpClient.shutdown);
 
     final serverConnectionPair = await _initializeMCPServer(
@@ -428,6 +446,26 @@ final class DartToolingMCPClient extends MCPClient
 /// A handler for elicitation requests.
 typedef ElicitationHandler =
     FutureOr<ElicitResult?> Function(ElicitRequest request);
+
+/// An MCP client which declares url elicitation and nothing else.
+///
+/// A server which asks it for a form elicitation gets an `RpcException` back
+/// from `elicit`, so this is the client every "did you check the mode"
+/// question is really about.
+final class UrlOnlyElicitationClient extends MCPClient
+    with ElicitationUrlSupport {
+  UrlOnlyElicitationClient()
+    : super(
+        Implementation(
+          name: 'url only elicitation test client',
+          version: '0.1.0',
+        ),
+      );
+
+  @override
+  FutureOr<ElicitResult> handleElicitation(ElicitRequest request, _) =>
+      ElicitResult(action: ElicitationAction.cancel);
+}
 
 /// The dart tooling daemon currently expects to get vm service URIs through
 /// the `Editor.getDebugSessions` DTD extension.

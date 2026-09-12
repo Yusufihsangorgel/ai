@@ -212,4 +212,32 @@ void main() {
       tmpDir.deleteSync(recursive: true);
     }
   });
+
+  group('with a url only elicitation client', () {
+    late TestHarness urlOnlyHarness;
+
+    setUpAll(() async {
+      urlOnlyHarness = await TestHarness.start(
+        inProcess: true,
+        processManager: const LocalProcessManager(),
+        clientFactory: UrlOnlyElicitationClient.new,
+        startFakeEditorExtension: false,
+      );
+    });
+
+    test('declines the ripgrep install instead of asking for a form', () async {
+      final server = urlOnlyHarness.serverConnectionPair.server!;
+      final tmpDir = server.fileSystem.systemTempDirectory.createTempSync(
+        'rip-grep-url-only-test',
+      );
+      try {
+        // Asking for a form this client did not declare would throw an
+        // RpcException out of `elicit`, which `callTool` rethrows.
+        expect(await server.tryInstallRipGrep(installDir: tmpDir), isNull);
+        expect(tmpDir.listSync(), isEmpty);
+      } finally {
+        tmpDir.deleteSync(recursive: true);
+      }
+    });
+  });
 }
