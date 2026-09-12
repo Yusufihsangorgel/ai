@@ -5,8 +5,9 @@
   list leaves out. Leaving the argument off keeps the header unread.
 - Add `ServerConnection.listAllTools`, `listAllResources`,
   `listAllResourceTemplates` and `listAllPrompts`, which walk the pages of
-  each list request and yield the items as a `Stream`, up to an optional
-  `maxPages` bound. The single-page methods are unchanged.
+  each list request and yield the items as a `Stream`, up to a default
+  64-page `maxPageCount` bound that passing `null` lifts. The single-page methods
+  are unchanged.
 - Add optional headers to `streamableHttpClientChannel`, with protocol headers
   taking precedence on each POST.
 - Convert schema enum values and multi-select defaults to fixed-length lists so

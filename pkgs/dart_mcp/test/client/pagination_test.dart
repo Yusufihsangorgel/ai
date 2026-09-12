@@ -174,14 +174,14 @@ void main() {
     ]);
   });
 
-  test('maxPages stops a walk the server never ends', () async {
+  test('maxPageCount stops a walk the server never ends', () async {
     server.pages = [
       ['a'],
     ];
     server.repeatCursor = true;
 
     await expectLater(
-      connection.listAllTools(maxPages: 3).toList(),
+      connection.listAllTools(maxPageCount: 3).toList(),
       throwsA(isA<StateError>()),
     );
     expect(server.cursors, [
@@ -191,7 +191,7 @@ void main() {
     ]);
   });
 
-  test('maxPages stops a server that alternates two cursors', () async {
+  test('maxPageCount stops a server that alternates two cursors', () async {
     server.pages = [
       ['a'],
       ['b'],
@@ -199,7 +199,7 @@ void main() {
     server.alternateCursors = true;
 
     await expectLater(
-      connection.listAllTools(maxPages: 4).toList(),
+      connection.listAllTools(maxPageCount: 4).toList(),
       throwsA(isA<StateError>()),
     );
     expect(server.cursors, [
@@ -210,14 +210,30 @@ void main() {
     ]);
   });
 
-  test('a maxPages under one is rejected before any request', () {
+  test('a maxPageCount under one is rejected before any request', () {
     server.pages = [
       ['a'],
     ];
 
-    expect(() => connection.listAllTools(maxPages: 0), throwsArgumentError);
-    expect(() => connection.listAllTools(maxPages: -5), throwsArgumentError);
+    expect(() => connection.listAllTools(maxPageCount: 0), throwsArgumentError);
+    expect(
+      () => connection.listAllTools(maxPageCount: -5),
+      throwsArgumentError,
+    );
     expect(server.cursors, isEmpty);
+  });
+
+  test('the default bound stops a walk the server never ends', () async {
+    server.pages = [
+      ['a'],
+    ];
+    server.repeatCursor = true;
+
+    await expectLater(
+      connection.listAllTools().toList(),
+      throwsA(isA<StateError>()),
+    );
+    expect(server.cursors, hasLength(64));
   });
 
   test('every page carries the progress token and it closes once', () async {
