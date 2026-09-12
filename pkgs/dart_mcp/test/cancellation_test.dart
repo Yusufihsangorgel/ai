@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:dart_mcp/client.dart';
 import 'package:dart_mcp/server.dart';
 import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart' show RpcException;
