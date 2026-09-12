@@ -5286,8 +5286,9 @@ base class _AckWithoutParamsServer extends MCPServer with SubscriptionsSupport {
 
   @override
   FutureOr<SubscriptionsListenResult> handleSubscriptionsListen(
-    SubscriptionsListenRequest request,
-  ) {
+    SubscriptionsListenRequest request, [
+    RequestId? subscriptionId,
+  ]) {
     sendNotification(SubscriptionsAcknowledgedNotification.methodName);
     return SubscriptionsListenResult.fromMap({});
   }

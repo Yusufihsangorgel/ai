@@ -6,10 +6,8 @@ part of 'server.dart';
 
 /// A mixin for MCP servers which serve `subscriptions/listen` requests.
 ///
-/// Stamps the subscription id on the acknowledgement and holds the request
-/// until shutdown. A `package:json_rpc_2` handler does not receive that id,
-/// so a transport sets [nextSubscriptionId] before delivering the request.
-/// [handleRequestScopedMessage] does. A request without one is refused.
+/// Stamps the subscription id from the JSON-RPC request [Parameters.id] and
+/// holds the request until shutdown. A null id is refused.
 ///
 /// See https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
 base mixin SubscriptionsSupport on MCPServer {
@@ -19,23 +17,25 @@ base mixin SubscriptionsSupport on MCPServer {
   /// The first [shutdown] call, which every later one waits on.
   Completer<void>? _shutdown;
 
-  /// The id the next `subscriptions/listen` request opens its subscription
-  /// under.
-  ///
-  /// A handler cannot read the JSON-RPC id of the request it answers, and a
-  /// subscription is named by that id. The transport serving the request sets
-  /// this before delivering it. Leaving it `null` refuses the request.
-  RequestId? nextSubscriptionId;
-
   @override
   FutureOr<void> initialize(MCPServerInitialization initialization) async {
     if (initialization.protocolVersion.methodIsValid(
       SubscriptionsListenRequest.methodName,
     )) {
-      registerRequestHandler(
-        SubscriptionsListenRequest.methodName,
-        handleSubscriptionsListen,
-      );
+      registerRequestHandlerWithParameters<
+        SubscriptionsListenRequest,
+        SubscriptionsListenResult?
+      >(SubscriptionsListenRequest.methodName, (
+        SubscriptionsListenRequest request,
+        Parameters parameters,
+      ) {
+        if (parameters.isNotification) return null;
+        final id = parameters.id;
+        return handleSubscriptionsListen(
+          request,
+          id == null ? null : RequestId(id),
+        );
+      });
     }
 
     await super.initialize(initialization);
@@ -81,13 +81,12 @@ base mixin SubscriptionsSupport on MCPServer {
   /// [ResourcesSupport.updateResource] reaches the client that asked for it.
   ///
   /// Throws an [RpcException] with `-32602` if the filter is not the shape
-  /// the schema describes, and `-32600` if [nextSubscriptionId] is missing
+  /// the schema describes, and `-32600` if [subscriptionId] is missing
   /// or already names an open subscription.
   FutureOr<SubscriptionsListenResult> handleSubscriptionsListen(
-    SubscriptionsListenRequest request,
-  ) async {
-    final subscriptionId = nextSubscriptionId;
-    nextSubscriptionId = null;
+    SubscriptionsListenRequest request, [
+    RequestId? subscriptionId,
+  ]) async {
     final fields = request as Map<String, Object?>;
     final notifications = fields[Keys.notifications];
     if (notifications is! Map<String, Object?>) {

@@ -265,11 +265,9 @@
   acknowledges the filter the server can honor, stamps the subscription
   id, and holds the request until shutdown, see
   https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
-  - A handler cannot read the JSON-RPC id of the request it answers, so a
-    transport names the subscription by setting
-    `SubscriptionsSupport.nextSubscriptionId` before delivering it.
-    `handleRequestScopedMessage` does. A request arriving without one is
-    answered with `-32600`.
+  - The handler names the subscription from `Parameters.id`, the JSON-RPC
+    id of the `subscriptions/listen` request, and answers `-32600` when that
+    id is null or already open.
   - The Streamable HTTP handler keeps that response open as SSE and routes
     matching list and resource notifications onto it. A client that closes
     the response ends the subscription without a final result. An

@@ -86,15 +86,27 @@ base class MCPBase {
   void registerRequestHandler<T extends Request?, R extends Result?>(
     String name,
     FutureOr<R> Function(T) impl,
-  ) => _peer.registerMethod(name, (Parameters p) {
-    if (p.value != null && p.value is! Map) {
-      throw ArgumentError(
-        'Request to $name must be a Map or null. Instead, got '
-        '${p.value.runtimeType}',
-      );
-    }
-    return impl((p.value as Map?)?.cast<String, Object?>() as T);
-  });
+  ) => registerRequestHandlerWithParameters<T, R>(
+    name,
+    (request, _) => impl(request),
+  );
+
+  /// Registers a handler for [name] that also receives the request
+  /// [Parameters], including the JSON-RPC id.
+  @protected
+  void registerRequestHandlerWithParameters<
+    T extends Request?,
+    R extends Result?
+  >(String name, FutureOr<R> Function(T request, Parameters parameters) impl) =>
+      _peer.registerMethod(name, (Parameters p) {
+        if (p.value != null && p.value is! Map) {
+          throw ArgumentError(
+            'Request to $name must be a Map or null. Instead, got '
+            '${p.value.runtimeType}',
+          );
+        }
+        return impl((p.value as Map?)?.cast<String, Object?>() as T, p);
+      });
 
   /// Registers a notification handler named [name] on this server.
   void registerNotificationHandler<T extends Notification?>(
