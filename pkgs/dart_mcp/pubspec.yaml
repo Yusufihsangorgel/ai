@@ -25,3 +25,7 @@ dev_dependencies:
   crypto: ^3.0.7
   dart_flutter_team_lints: ^3.2.1
   test: ^1.32.0
+
+dependency_overrides:
+  json_rpc_2:
+    path: /Users/yusufihsan/Documents/bt162/gorev/tools/pkgs/json_rpc_2
