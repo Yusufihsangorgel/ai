@@ -953,37 +953,6 @@ class _ClientHarness {
   Iterable<Map<String, Object?>> get progressFrames => frames.where(
     (frame) => frame['method'] == ProgressNotification.methodName,
   );
-
-  /// Sends the client a `roots/list` request as [id] under [token], cancels it
-  /// while its handler is running, and releases the handler.
-  ///
-  /// A client answering a server's request is the role that reaches
-  /// [MCPClient.connectServer], so this fills the retention bound that call
-  /// passed on.
-  Future<void> cancelListRoots(Object id, String token) async {
-    client.listRootsCalled = Completer<void>();
-    final release = client.finishListRoots = Completer<void>();
-    send({
-      'jsonrpc': '2.0',
-      'id': id,
-      'method': ListRootsRequest.methodName,
-      'params': <String, Object?>{
-        '_meta': <String, Object?>{'progressToken': token},
-      },
-    });
-    await client.listRootsCalled.future;
-    send({
-      'jsonrpc': '2.0',
-      'method': CancelledNotification.methodName,
-      'params':
-          CancelledNotification(requestId: RequestId(id))
-              as Map<String, Object?>,
-    });
-    await pumpEventQueue();
-    release.complete();
-    await pumpEventQueue();
-    expect(framesWithId(id), isEmpty);
-  }
 }
 
 /// A client whose `roots/list` handler the test releases by hand.
@@ -992,9 +961,6 @@ final class _CancellationTestClient extends MCPClient with RootsSupport {
     : super(Implementation(name: 'cancellation test client', version: '1.0.0'));
 
   /// Completes when the roots handler has started.
-  ///
-  /// Replaced by [_ClientHarness.cancelListRoots] before each request it
-  /// drives.
   Completer<void> listRootsCalled = Completer<void>();
 
   /// Completed by the test to let the roots handler return.
