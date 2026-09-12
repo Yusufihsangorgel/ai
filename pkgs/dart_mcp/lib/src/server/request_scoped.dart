@@ -24,6 +24,8 @@ typedef MCPServerFactory =
 /// between messages. Decoding the wire format, extracting the per-request
 /// context, and anything HTTP-specific stay in the transport. Protocol
 /// metadata carried in [message]'s own `_meta` is not read here;
+/// a successful `subscriptions/listen` result keeps the exchange open until
+/// the server shuts down.
 /// [initialization] is the sole source of the per-request context.
 ///
 /// [message] is a request if it has a non-null `id` member and a notification
@@ -33,7 +35,11 @@ typedef MCPServerFactory =
 /// `io.modelcontextprotocol/serverInfo` result metadata key, carries a
 /// `resultType`, and, for the requests the caching rules name, carries `ttlMs`
 /// and `cacheScope` unless it is an interim `resources/read` result, which is
-/// not cacheable. A field the handler left out is filled in: a `resultType`
+/// not cacheable. The acknowledgement and result for `subscriptions/listen`
+/// carry the request id under `io.modelcontextprotocol/subscriptionId`.
+/// A listen request is named before delivery by setting
+/// [SubscriptionsSupport.nextSubscriptionId] to that id. A
+/// field the handler left out is filled in: a `resultType`
 /// left `null` becomes `complete`, a `ttlMs` which is `null` becomes `0`, and
 /// a `cacheScope` which is `null` becomes `private`. The dispatcher cannot
 /// know when an answer goes stale, and `public` is the one guess which could
@@ -56,6 +62,7 @@ typedef MCPServerFactory =
 /// leaves it pending and the server alive. To bound execution, retain the
 /// server your factory creates and call [MCPServer.shutdown] on it; the
 /// exchange then completes with an internal-error response.
+/// A successful `subscriptions/listen` result is returned after that shutdown.
 ///
 /// The [MCPServer.capabilities] a server registers are intentionally not
 /// surfaced here: in this lifecycle clients discover capabilities with
@@ -68,15 +75,12 @@ typedef MCPServerFactory =
 /// [onNotification] are reported as uncaught errors and do not fail the
 /// exchange.
 ///
-/// Requests from the server back to the client, such as `roots/list`, cannot
-/// be answered within a single-message exchange: they fail with an
-/// [RpcException] inside their handler, or with a [StateError] if the exchange
-/// has already been torn down. When the negotiated revision does not have one,
-/// [MCPServer.listRoots], [MCPServer.createMessage], and
-/// [ElicitationRequestSupport.elicit] refuse it before it gets this far.
-/// 2026-07-28 has none of the three. It dropped `ping` as well, and
-/// [MCPBase.ping] does not read the revision, so a ping still fails inside its
-/// handler.
+/// On revisions before 2026-07-28, requests from the server back to the client
+/// are passed to [onRequest]. Its response must be a JSON-RPC response carrying
+/// the request id. A callback error or an invalid response fails the server's
+/// request with an internal error. A response completed after the exchange has
+/// closed is discarded. Without [onRequest], server requests fail immediately.
+/// The callback is not used on 2026-07-28.
 ///
 /// If [beforeDispatch] is given, it receives the initialized server and runs
 /// before [message] is delivered. A non-`null` result stops dispatch: requests
@@ -89,13 +93,13 @@ typedef MCPServerFactory =
 /// request-scoped is the transport's job. Errors thrown by [serverFactory] or
 /// by [MCPServer.initialize] propagate to the caller; a server that was
 /// created is shut down first.
-// TODO: Route server-to-client requests on revisions before 2026-07-28.
-// https://github.com/dart-lang/ai/issues/162
 Future<Map<String, Object?>?> handleRequestScopedMessage(
   Map<String, Object?> message,
   MCPServerInitialization initialization,
   MCPServerFactory serverFactory, {
   void Function(Map<String, Object?> notification)? onNotification,
+  FutureOr<Map<String, Object?>> Function(Map<String, Object?> request)?
+  onRequest,
   FutureOr<RpcException?> Function(MCPServer server)? beforeDispatch,
 }) async {
   final object = JsonRpc2Object.fromMap(message);
@@ -130,6 +134,14 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
     );
   }
 
+  final routeServerRequests = switch (initialization.protocolVersion) {
+    ProtocolVersion.v2024_11_05 => true,
+    ProtocolVersion.v2025_03_26 => true,
+    ProtocolVersion.v2025_06_18 => true,
+    ProtocolVersion.v2025_11_25 => true,
+    ProtocolVersion.v2026_07_28 => false,
+  };
+
   // The message is delivered over an in-memory channel so the exchange runs
   // through the same Peer validation and dispatch path as a wire connection.
   final inbound = StreamController<Map<String, Object?>>();
@@ -145,12 +157,13 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
       try {
         switch (JsonRpc2Object.fromMap(data).kind) {
           case JsonRpc2Kind.request:
-            // A request from the server to the client. Nothing can answer it
-            // in a single-message exchange, so fail it back to the server
-            // instead of leaving its handler waiting forever. Late requests
-            // from work which outlives the exchange find the connection
-            // already closed.
-            if (!inbound.isClosed) {
+            if (routeServerRequests && onRequest != null) {
+              unawaited(
+                _answerServerRequest(data, onRequest).then((answer) {
+                  if (!inbound.isClosed) inbound.add(answer);
+                }),
+              );
+            } else if (!inbound.isClosed) {
               inbound.add(
                 _errorResponse(
                   JsonRpc2Request.fromMap(data).id,
@@ -161,7 +174,13 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
             }
           case JsonRpc2Kind.notification:
             try {
-              onNotification?.call(data);
+              onNotification?.call(
+                _withSubscriptionIdOnAcknowledgement(
+                  data,
+                  method,
+                  message[Keys.id],
+                ),
+              );
             } catch (error, stackTrace) {
               // A misbehaving callback must not fail the request being
               // handled, but it should still be visible.
@@ -234,14 +253,60 @@ Future<Map<String, Object?>?> handleRequestScopedMessage(
       // empty stream.
       return isRequest ? rejection.serialize(message) : null;
     }
+    if (server case final SubscriptionsSupport subscriptions
+        when isRequest && method == SubscriptionsListenRequest.methodName) {
+      subscriptions.nextSubscriptionId = RequestId(message[Keys.id]!);
+    }
     inbound.add(message);
-    if (isRequest) return await response.future;
+    if (isRequest) {
+      final result = await response.future;
+      if (method == SubscriptionsListenRequest.methodName &&
+          result?[Keys.result] is Map<String, Object?>) {
+        await server.done;
+      }
+      return result;
+    }
     return null;
   } finally {
     await inbound.close();
     await server.done;
     await subscription.cancel();
   }
+}
+
+/// Returns the answer for a server [request], or an internal error carrying
+/// its id when [onRequest] fails or returns an invalid response.
+Future<Map<String, Object?>> _answerServerRequest(
+  Map<String, Object?> request,
+  FutureOr<Map<String, Object?>> Function(Map<String, Object?> request)
+  onRequest,
+) async {
+  final id = JsonRpc2Request.fromMap(request).id;
+  try {
+    final response = await onRequest(request);
+    if (_isResponseFor(response, id)) return response;
+    return _errorResponse(
+      id,
+      'The client request handler returned an invalid response',
+    );
+  } catch (error, stackTrace) {
+    Zone.current.handleUncaughtError(error, stackTrace);
+    return _errorResponse(id, 'The client request handler failed');
+  }
+}
+
+/// Whether [response] is a JSON-RPC response for [id].
+bool _isResponseFor(Map<String, Object?> response, Object? id) {
+  if (response[Keys.jsonrpc] != '2.0' || response[Keys.id] != id) return false;
+  if (response.containsKey(Keys.method)) return false;
+  final hasResult = response.containsKey(Keys.result);
+  final hasError = response.containsKey(Keys.error);
+  if (hasResult == hasError) return false;
+  if (!hasError) return true;
+  final error = response[Keys.error];
+  return error is Map<String, Object?> &&
+      error[Keys.code] is int &&
+      error[Keys.message] is String;
 }
 
 /// A JSON-RPC error response to the request with the given [id], carrying the
@@ -432,6 +497,33 @@ RpcException? _missingInputRequestCapability(
   }
 }
 
+/// Adds [requestId] to an acknowledgement for [requestMethod].
+Map<String, Object?> _withSubscriptionIdOnAcknowledgement(
+  Map<String, Object?> notification,
+  String requestMethod,
+  Object? requestId,
+) {
+  if (requestMethod != SubscriptionsListenRequest.methodName ||
+      notification[Keys.method] !=
+          SubscriptionsAcknowledgedNotification.methodName) {
+    return notification;
+  }
+  final params = notification[Keys.params];
+  if (params is! Map<String, Object?>) return notification;
+  final meta = params[Keys.meta];
+  if (meta is! Map<String, Object?>?) return notification;
+  return {
+    ...notification,
+    Keys.params: {
+      ...params,
+      Keys.meta: MetaWithSubscriptionId.fromMap({
+        ...?meta,
+        Keys.subscriptionIdMeta: requestId,
+      }),
+    },
+  };
+}
+
 /// Returns a copy of [response] with the fields a server on this protocol
 /// revision must send and the handler for [method] did not, as
 /// [handleRequestScopedMessage] describes.
@@ -460,6 +552,10 @@ Map<String, Object?> _withServerFields(
       modern &&
       meta is Map<String, Object?>? &&
       existingMeta?[Keys.serverInfoMeta] == null;
+  final stampSubscriptionId =
+      modern &&
+      method == SubscriptionsListenRequest.methodName &&
+      meta is Map<String, Object?>?;
   final resultType = result[Keys.resultType];
   final addResultType = modern && resultType == null;
   // Only a complete result is cacheable. `resources/read` is the one cacheable
@@ -492,7 +588,11 @@ Map<String, Object?> _withServerFields(
   );
   final addCacheScope = cacheable && !scopeAllowed;
 
-  if (!addServerInfo && !addResultType && !addTtlMs && !addCacheScope) {
+  if (!addServerInfo &&
+      !stampSubscriptionId &&
+      !addResultType &&
+      !addTtlMs &&
+      !addCacheScope) {
     return response;
   }
 
@@ -508,13 +608,15 @@ Map<String, Object?> _withServerFields(
       if (addResultType) Keys.resultType: ResultTypes.complete,
       if (addTtlMs) Keys.ttlMs: 0,
       if (addCacheScope) Keys.cacheScope: CacheScope.private.name,
-      if (addServerInfo)
-        Keys.meta: {
+      if (addServerInfo || stampSubscriptionId)
+        Keys.meta: MetaWithSubscriptionId.fromMap({
           ...?existingMeta,
-          Keys.serverInfoMeta: Map<String, Object?>.of(
-            implementation as Map<String, Object?>,
-          ),
-        },
+          if (addServerInfo)
+            Keys.serverInfoMeta: Map<String, Object?>.of(
+              implementation as Map<String, Object?>,
+            ),
+          if (stampSubscriptionId) Keys.subscriptionIdMeta: response[Keys.id],
+        }),
     },
   };
 }

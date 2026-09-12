@@ -1,5 +1,20 @@
 ## 0.6.0-wip
 
+- Validate the `Origin` header against `allowedOrigins` on
+  `handleStreamableHttpRequest`, answering 403 when a request carries one the
+  list leaves out. Leaving the argument off keeps the header unread.
+- Add optional headers to `streamableHttpClientChannel`, with protocol headers
+  taking precedence on each POST.
+- Convert schema enum values and multi-select defaults to fixed-length lists so
+  schemas built from sets or lazy iterables can be JSON encoded.
+- Split the Streamable HTTP implementation into client and server libraries
+  without changing its public API.
+- Stop sending `notifications/roots/list_changed` to a server that speaks
+  2026-07-28. An unsettled connection still gets it.
+- Add a client fixture for the MCP conformance suite under `tool/`.
+- Let `handleRequestScopedMessage` route server-to-client requests through an
+  `onRequest` callback on revisions before 2026-07-28. Missing callbacks and
+  invalid callback responses fail the server request without leaving it open.
 - **BREAKING**:
   - `MCPBase` (including the `MCPServer.fromStreamChannel` and
     `ServerConnection.fromStreamChannel` constructors),
@@ -118,6 +133,30 @@
     the way its dartdoc already described, instead of holding the rejected
     server's implementation. `initialize` still returns that result and
     `serverCapabilities` still holds what the server sent.
+  - `ToolsSupport.callTool`, `PromptsSupport.getPrompt` and
+    `ResourcesSupport.readResource` return `CallToolResponse`,
+    `GetPromptResponse` and `ReadResourceResponse`, which both the completed
+    result and `InputRequiredResult` implement. A handler can ask for input
+    before it answers. The `registerTool`, `addPrompt`, `addResource` and
+    `updateResource` parameters taking those handlers widen with them.
+    `Result.isInputRequired` tells them apart. Handlers passed to those
+    parameters still type check, since the completed results implement the new
+    supertypes. A subclass or mixin overriding one of those three methods
+    declares the wider return type, then checks `isInputRequired` and casts
+    before it reads the completed result.
+  - Capability extension identifiers are validated wherever they are written,
+    read or forwarded. An `extensions` value which is not a map of identifiers
+    in the `{vendor-prefix}/{extension-name}` format throws an
+    `ArgumentError`, and an initialize request carrying one comes back as
+    invalid params. Validation reads without rewriting, so the settings under
+    each identifier stay the ones the caller passed, and an empty extension
+    name such as `example/` is still valid. Writing null `extensions` now
+    leaves the key out instead of writing a null.
+- Cap the request body in `handleStreamableHttpRequest` at
+  `maxRequestBodyBytes`, 4 MiB by default.
+  Larger bodies get `413` and an invalid request error. The same cap is the
+  discard budget. A client that has not finished sending may not read the
+  response. Negative caps throw a `RangeError`.
 - Add `supportsFormElicitation` and `supportsUrlElicitation` for a server to
   ask before it sends. An empty `elicitation` object still means form, the way
   `elicitation` read before the split.
@@ -172,6 +211,17 @@
   `ReadResourceResult` now implement `CacheableResult`, so the hints are
   readable on responses from servers that send them, and their factories take
   an optional `ttlMs` and `cacheScope`, which are left out when not passed.
+- Cache client responses for the six operations that carry caching hints, see
+  https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching.
+  A response is reused when the request names 2026-07-28 in its `_meta` or the
+  connection settled on that revision, under a key covering the parameters and
+  that metadata. Entries are bounded per connection and are dropped by change
+  notifications, stale cursors, and `shutdown`. A `resources/updated` drops a
+  read whose contents named that URI, and one leaving its URI out drops every
+  cached read. A read still in flight when one of its contents changes is not
+  stored. A cache belongs to one `ServerConnection`, and a `private` result
+  never leaves it. An `InputRequiredResult` and the retry it asks for are never
+  cached.
 - Add `McpErrorCodes.headerMismatch` (`-32020`),
   `.missingRequiredClientCapability` (`-32021`), and
   `.unsupportedProtocolVersion` (`-32022`), the error codes the 2026-07-28
@@ -185,13 +235,15 @@
 - Add `InputRequiredResult` and `InputRequest`, the result a server answers with
   when it needs input first, see
   https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr.
-  A server built with this package does not send one yet.
 - On a 2026-07-28 connection, `ServerConnection.callTool`, `.getPrompt` and
   `.readResource` answer an `input_required` result from the client's
   elicitation, sampling and roots handlers, then send the original request
   again, through the new `ServerConnection.sendRequestWithInputs`. The spec
   bounds the rounds nowhere, so `ServerConnection.maxInputRequiredRounds`
-  stops them, at ten unless a caller moves it or clears it with `null`.
+  stops them, at ten unless a caller moves it or clears it with `null`. A
+  retry that carries no input requests, including an empty map, waits
+  `ServerConnection.inputRequiredRetryDelay` first, 250 milliseconds unless
+  a caller moves it or clears it with `null`.
 - Add `MCPBase.sendRequestKeepingProgress` and `MCPBase.closeProgress`.
   `sendRequest` closes a progress stream once its request is done, and this
   pair splits that apart so a retry loop can hold one token across rounds.
@@ -208,8 +260,36 @@
   HTTP GET endpoint, `resources/subscribe`, and `resources/unsubscribe`.
   `SubscriptionFilter.resourceSubscriptions` carries the resource URIs the last
   two took. `SubscribeRequest` and `UnsubscribeRequest` stay for the revisions
-  which have them. Serving the request, and delivering notifications on the
-  stream it opens, land as separate changes.
+  which have them.
+- Serve `subscriptions/listen` from `SubscriptionsSupport`, which
+  acknowledges the filter the server can honor, stamps the subscription
+  id, and holds the request until shutdown, see
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
+  - A handler cannot read the JSON-RPC id of the request it answers, so a
+    transport names the subscription by setting
+    `SubscriptionsSupport.nextSubscriptionId` before delivering it.
+    `handleRequestScopedMessage` does. A request arriving without one is
+    answered with `-32600`.
+  - The Streamable HTTP handler keeps that response open as SSE and routes
+    matching list and resource notifications onto it. A client that closes
+    the response ends the subscription without a final result. An
+    acknowledgement whose params are not a JSON object is answered with an
+    error rather than dropped.
+  - The dispatcher still fills the request id into the acknowledgement and
+    the result under `io.modelcontextprotocol/subscriptionId` when a
+    handler leaves it out. The factories for those two types now take a
+    required `MetaWithSubscriptionId` through the new `WithSubscriptionId`
+    shape.
+  - Only a server whose negotiated version has the method registers the
+    handler.
+  - A server that mixes this in keeps the `subscribe` and `listChanged`
+    bits on its discover advertisement.
+  - `ResourcesSupport.updateResource` now reaches a client for every URI an
+    acknowledged `resourceSubscriptions` filter names. Only
+    `resources/subscribe` opened those subscriptions before, and this
+    revision took that request out.
+  - An embedder can pass a `subscriptionNotifications` stream so a change
+    from one request reaches another request's listen stream.
 - Deprecate `IncludeContext.thisService` and replace it with `thisServer`, the
   name the specification uses, see
   https://modelcontextprotocol.io/specification/2026-07-28/client/sampling.
@@ -251,12 +331,26 @@
   that cannot carry the hints.
 - Answer a request whose handler emits related notifications on an SSE
   response stream. A quiet handler keeps its JSON body. List changes and
-  resource updates reach `onNotification` alone, since this revision carries
+  resource updates skip that request's stream, since this revision carries
   those on a `subscriptions/listen` stream. Does not treat a closed stream as
   cancellation, which the specification requires.
 - Add `sseMessageStream`, decoding the `message` events of an SSE response
   into JSON objects. Undecodable data becomes an error event without ending
   the stream, though `await for` stops on the first one.
+- Add `streamableHttpClientChannel`, posting each client message as a
+  Streamable HTTP request and emitting JSON or SSE responses on the channel.
+  The helper speaks only 2026-07-28 and does not negotiate a version.
+  - A failed POST is an error for that request id, or an error on the channel
+    when it carried a notification. A response stream that ends without
+    answering counts the same way, and so does a notification answered with a
+    body or a JSON reply whose id does not match the request's.
+  - Valid `x-mcp-header` annotations from `tools/list` are mirrored on later
+    `tools/call` requests, including an integer written as a decimal. A value
+    the tool cannot carry fails the request instead of going out without its
+    header, and a `tools/call` whose params or arguments are not a string-keyed
+    map is a request error.
+  - Invalid tool definitions are dropped, and a `tools/list` page with no
+    cursor replaces what earlier pages taught.
 - Serve `server/discover` from `MCPServer.discover`, which answers with the
   request-scoped protocol versions this package implements, the capabilities
   `MCPServer.initialize` registered, and the instructions the server was given.
@@ -269,10 +363,9 @@
   - A server on an earlier revision that answered would be taken for a modern
     one, see
     https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio#backward-compatibility.
-  - The advertisement removes `subscribe` and the three `listChanged` bits,
-    since a client only hears those notifications over a
-    `subscriptions/listen` stream, and this package does not serve that
-    request yet.
+  - The advertisement removes `subscribe` and the three `listChanged` bits
+    unless the server mixes in `SubscriptionsSupport`, since a client only
+    hears those notifications over a `subscriptions/listen` stream.
   - Every other key on those capabilities goes out as it is, and so does the
     rest of the field, since capabilities are an open set.
     `initializeLegacy` still sends all of them.
@@ -286,11 +379,14 @@
   against the required headers and `_meta` envelope, then dispatched to a
   fresh server instance via `handleRequestScopedMessage`. See
   `example/streamable_http_server.dart`. Does not add the legacy session
-  routes or an HTTP client; those land as separate changes.
+  routes; those land as a separate change.
 - Add `ProtocolVersion.addedMethods` and `.removedMethods`, listing what each
   revision of the protocol introduced and took out, and
   `ProtocolVersion.methodIsValid`, which walks back from a revision to answer
   whether it has a method.
+- Add `ProtocolVersion.supportsStreamableHttp` and require every enum value to
+  set it. `streamableHttpClientChannel` reads the field when validating a
+  version and listing the versions it accepts.
 - Reject the methods the 2026-07-28 revision removed with `404` and
   `-32601` in `handleStreamableHttpRequest`. Until now
   `ping` answered `200` on every server, and `logging/setLevel`,
@@ -330,6 +426,12 @@
     reserved keys the schema makes required, plus `clientInfo`, `logLevel` and
     `progressToken` when they are given, see
     https://modelcontextprotocol.io/specification/2026-07-28/server/discover.
+- Add a local MCP conformance probe under `tool/`.
+- Accept a multi-select enum as an elicitation property.
+  `UntitledMultiSelectEnumSchema` and `TitledMultiSelectEnumSchema` build the
+  two schemas the spec lists, and an array with `items` matching neither is
+  refused.
+- Add list-change subscriptions to the local conformance probe.
 
 ## 0.5.2
 
