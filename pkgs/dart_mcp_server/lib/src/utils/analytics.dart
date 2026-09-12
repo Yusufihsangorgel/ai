@@ -36,12 +36,6 @@ String? get agentPlugin =>
     Zone.current[_agentPluginOverrideKey] as String? ??
     Platform.environment[agentPluginEnvVar];
 
-/// Stands in for a client name or version the client did not declare.
-///
-/// The legacy `initialize` handshake always carries the client
-/// implementation; request-scoped transports may leave it out.
-const unknownClient = 'unknown';
-
 enum AnalyticsEvent {
   callTool,
   initialize,

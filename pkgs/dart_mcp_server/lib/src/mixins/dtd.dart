@@ -75,6 +75,12 @@ base mixin DartToolingDaemonSupport
   /// for full list of available Flutter Widget Inspector service extensions.
   static const _inspectorServiceExtensionPrefix = 'ext.flutter.inspector';
 
+  /// The service name prefix used when the client named itself nothing.
+  ///
+  /// [generateClientId] appends a short UUID, so this only affects how the
+  /// registered DTD service reads.
+  static const _unnamedClient = 'unknown';
+
   /// A unique identifier for this server instance.
   ///
   /// This is generated on first access and then cached. It is used to create
@@ -83,7 +89,7 @@ base mixin DartToolingDaemonSupport
   /// Can only be accessed after `initialize` has been called.
   String get clientId {
     if (_clientId != null) return _clientId!;
-    final clientName = clientInfo?.title ?? clientInfo?.name ?? unknownClient;
+    final clientName = clientInfo?.title ?? clientInfo?.name ?? _unnamedClient;
     _clientId = generateClientId(clientName);
     return _clientId!;
   }
@@ -161,20 +167,25 @@ base mixin DartToolingDaemonSupport
       );
       watch.stop();
       try {
-        analytics?.send(
-          ua.Event.dartMCPEvent(
-            client: clientInfo?.name ?? unknownClient,
-            clientVersion: clientInfo?.version ?? unknownClient,
-            serverVersion: implementation.version,
-            type: AnalyticsEvent.readResource.name,
-            agentPlugin: agentPlugin,
-            additionalData: ReadResourceMetrics(
-              kind: ResourceKind.runtimeErrors,
-              length: result.contents.length,
-              elapsedMilliseconds: watch.elapsedMilliseconds,
+        // A client which declared no implementation cannot fill the required
+        // `client` and `clientVersion` fields, so it gets no event.
+        final info = clientInfo;
+        if (info != null) {
+          analytics?.send(
+            ua.Event.dartMCPEvent(
+              client: info.name,
+              clientVersion: info.version,
+              serverVersion: implementation.version,
+              type: AnalyticsEvent.readResource.name,
+              agentPlugin: agentPlugin,
+              additionalData: ReadResourceMetrics(
+                kind: ResourceKind.runtimeErrors,
+                length: result.contents.length,
+                elapsedMilliseconds: watch.elapsedMilliseconds,
+              ),
             ),
-          ),
-        );
+          );
+        }
       } catch (e) {
         log(LoggingLevel.warning, 'Error sending analytics event: $e');
       }
