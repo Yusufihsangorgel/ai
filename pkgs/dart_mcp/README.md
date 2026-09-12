@@ -50,6 +50,21 @@ all operations, you may check the `ClientCapabilities` passed to
 and return an error, which may result in a better UX for the users of the
 client.
 
+### Asking the Client for Input
+
+A tool, prompt or resource handler that needs something from the client answers
+with an `InputRequiredResult` naming the elicitation, sampling or roots request
+it wants filled in. On 2026-07-28 the client answers by retrying the request
+with the responses attached. On earlier revisions the server sends the same
+requests itself over the connection and reruns the handler with the answers.
+A handler written this way serves every supported revision.
+
+Check `MCPServer.clientCapabilities` before asking for something the client did
+not declare. If your server needs a capability for every call, read the
+`ClientCapabilities` passed to `MCPServer.initialize` through
+`MCPServerInitialization.clientCapabilities` and return an error there, which
+gives the client a better message than a failing tool call.
+
 ## Implementing Clients
 
 To implement a client, import `package:dart_mcp/client.dart` and extend the
@@ -127,7 +142,7 @@ can be used, but some are directly supported out of the box.
 | Transport | Support | Notes |
 | --- | --- | --- |
 | [Stdio](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio) | :heavy_check_mark: |  |
-| [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) | :construction: | `handleStreamableHttpRequest` serves requests, answering with an SSE stream when a handler emits related notifications and with a JSON body otherwise. `streamableHttpClientChannel` posts each client message, reads JSON and SSE responses, reports a failure on its request id or on the channel when there is none, and mirrors `x-mcp-header` tool parameters. It speaks only 2026-07-28 and does not fall back to an earlier transport. |
+| [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) | :heavy_check_mark: | `handleStreamableHttpRequest` serves requests, answering with an SSE stream when a handler emits related notifications and with a JSON body otherwise. `streamableHttpClientChannel` posts each client message, reads JSON and SSE responses, reports a failure on its request id or on the channel when there is none, and mirrors `x-mcp-header` tool parameters. It speaks only 2026-07-28 and does not fall back to an earlier transport. |
 
 ## Batching Requests
 
