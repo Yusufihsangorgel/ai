@@ -6,11 +6,7 @@
   included.
 - Track `AGENT_PLUGIN` environment variable in analytics events.
 - Add missing license headers.
-- Build against `dart_mcp` 0.6.0, through a local path override until it is
-  published. Feature registration moves to
-  `MCPServer.initialize(MCPServerInitialization)`, the tool and prompt handlers
-  widen to `CallToolResponse` and `GetPromptResponse`, and the channel carries
-  decoded JSON-RPC maps.
+- Build against `dart_mcp` 0.6.0.
 - Ask for ripgrep install consent only when the client declared form
   elicitation.
 
