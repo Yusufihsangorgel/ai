@@ -75,13 +75,16 @@ void main() {
     );
   });
 
-  test('the legacy handshake does not support the request-scoped era', () {
-    // The 2026-07-28 revision is spoken by its own transport; the legacy
-    // handshake refusing it is what downgrades a modern server talking to a
-    // legacy client, so this must stay false until that handshake learns
-    // the revision.
-    expect(ProtocolVersion.v2026_07_28.isSupported, false);
-    expect(ProtocolVersion.v2026_07_28 > ProtocolVersion.latestSupported, true);
+  test('latestSupported is the newest known revision', () {
+    expect(ProtocolVersion.latestSupported, ProtocolVersion.v2026_07_28);
+    expect(ProtocolVersion.v2026_07_28.isSupported, true);
+  });
+
+  test('the legacy handshake does not negotiate the request-scoped era', () {
+    expect(
+      ProtocolVersion.v2026_07_28.methodIsValid(InitializeRequest.methodName),
+      isFalse,
+    );
   });
 
   test('protocol versions declare Streamable HTTP support', () {

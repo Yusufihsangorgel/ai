@@ -123,6 +123,10 @@ abstract base class MCPServer extends MCPBase {
       _rootsListChangedController?.stream;
   StreamController<RootsListChangedNotification?>? _rootsListChangedController;
 
+  bool _discoverHandlerRegistered = false;
+  ProtocolVersion? _selectedProtocolVersion;
+  bool _completeConnectionResults = false;
+
   MCPServer.fromStreamChannel(
     super.channel, {
     required this.implementation,
@@ -135,7 +139,37 @@ abstract base class MCPServer extends MCPBase {
       InitializedNotification.methodName,
       handleInitialized,
     );
+    // An enveloped `server/discover` before initialize is how a 2026-07-28
+    // client opens stdio. The handler itself refuses after a handshake.
+    _ensureDiscoverHandler();
   }
+
+  @override
+  void registerRequestHandlerWithParameters<
+    T extends Request?,
+    R extends Result?
+  >(String name, FutureOr<R> Function(T request, Parameters parameters) impl) =>
+      super.registerRequestHandlerWithParameters<T, R>(name, (
+        request,
+        parameters,
+      ) async {
+        final result = await impl(request, parameters);
+        final version = _selectedProtocolVersion;
+        if (result == null || version == null || !_completeConnectionResults) {
+          return result;
+        }
+        final response = _withServerFields(
+          {
+            Keys.jsonrpc: '2.0',
+            Keys.id: parameters.id,
+            Keys.result: result as Map<String, Object?>,
+          },
+          implementation,
+          name,
+          version,
+        );
+        return response[Keys.result] as R;
+      });
 
   @override
   Future<void> shutdown() async {
@@ -152,6 +186,7 @@ abstract base class MCPServer extends MCPBase {
   /// Transport-specific initialization, including the legacy MCP initialize
   /// request, is handled separately.
   FutureOr<void> initialize(MCPServerInitialization initialization) {
+    _selectedProtocolVersion ??= initialization.protocolVersion;
     protocolVersion = initialization.protocolVersion;
     clientCapabilities = initialization.clientCapabilities;
     clientInfo = initialization.clientInfo;
@@ -163,12 +198,8 @@ abstract base class MCPServer extends MCPBase {
         _rootsListChangedController!.sink.add,
       );
     }
-    // Registering this handler is itself a statement about the lifecycle, so
-    // only a server on a request-scoped revision does it. A client probing
-    // under the stdio backward compatibility rules would read an answer here
-    // as "this connection is modern".
     if (protocolVersion.methodIsValid(DiscoverRequest.methodName)) {
-      registerRequestHandler(DiscoverRequest.methodName, discover);
+      _ensureDiscoverHandler();
     }
   }
 
@@ -182,10 +213,10 @@ abstract base class MCPServer extends MCPBase {
   /// package implements rejects the versions it does not serve itself, the way
   /// `handleStreamableHttpRequest` does with its own version header check.
   ///
-  /// The request-scoped dispatcher fills in the rest of what the schema
-  /// requires, `resultType` and the caching hints, and stamps the server's
-  /// identity into `_meta`. This only answers the fields that are specific to
-  /// discovery. Override it to advertise something else.
+  /// The server response path fills in the rest of what the schema requires,
+  /// `resultType` and the caching hints, and stamps the server's identity into
+  /// `_meta`. This only answers the fields that are specific to discovery.
+  /// Override it to advertise something else.
   ///
   /// The request has no parameters of its own beyond the `_meta` envelope, and
   /// the per-request context that envelope carries reaches a server through
@@ -251,14 +282,28 @@ abstract base class MCPServer extends MCPBase {
   /// this method only to customize legacy protocol negotiation or its wire
   /// response.
   FutureOr<InitializeResult> initializeLegacy(InitializeRequest request) async {
-    // If we don't support or understand the version, set it to the latest one
-    // that we do support. If the client doesn't support that version they will
-    // terminate the connection.
+    if (_selectedProtocolVersion case final selected?) {
+      throw RpcException(
+        McpErrorCodes.unsupportedProtocolVersion,
+        'This connection already speaks ${selected.versionString}',
+        data: {
+          Keys.supported: _discoverableVersionStrings,
+          Keys.requested: request.protocolVersion?.versionString,
+        },
+      );
+    }
+    // Negotiate only a revision that still has `initialize`. 2026-07-28
+    // dropped that method; offering it here would lock a handshake
+    // connection onto a revision that cannot speak the handshake.
     final clientProtocolVersion = request.protocolVersion;
     final negotiatedProtocolVersion =
-        clientProtocolVersion == null || !clientProtocolVersion.isSupported
-            ? ProtocolVersion.latestSupported
-            : clientProtocolVersion;
+        clientProtocolVersion != null &&
+                clientProtocolVersion.isSupported &&
+                clientProtocolVersion.methodIsValid(
+                  InitializeRequest.methodName,
+                )
+            ? clientProtocolVersion
+            : _latestHandshakeVersion;
 
     late final ClientCapabilities clientCapabilities;
     try {
@@ -272,7 +317,8 @@ abstract base class MCPServer extends MCPBase {
       );
     }
 
-    assert(!_initialized.isCompleted);
+    _selectedProtocolVersion = negotiatedProtocolVersion;
+    _completeConnectionResults = true;
     await initialize(
       MCPServerInitialization(
         protocolVersion: negotiatedProtocolVersion,
@@ -285,6 +331,119 @@ abstract base class MCPServer extends MCPBase {
       serverCapabilities: capabilities,
       serverInfo: implementation,
       instructions: instructions,
+    );
+  }
+
+  void _ensureDiscoverHandler() {
+    if (_discoverHandlerRegistered) return;
+    _discoverHandlerRegistered = true;
+    registerRequestHandler(DiscoverRequest.methodName, _handleDiscover);
+  }
+
+  /// Answers `server/discover`. An enveloped probe before initialize
+  /// enters 2026-07-28; after a handshake it is method-not-found.
+  FutureOr<DiscoverResult> _handleDiscover(DiscoverRequest? request) async {
+    if (_selectedProtocolVersion case final selected?) {
+      if (!_initialized.isCompleted ||
+          !selected.methodIsValid(DiscoverRequest.methodName)) {
+        throw RpcException(
+          error_code.METHOD_NOT_FOUND,
+          'Unknown method "${DiscoverRequest.methodName}".',
+        );
+      }
+      return discover(request);
+    }
+    final initialization = _initializationFromDiscover(request);
+    _selectedProtocolVersion = initialization.protocolVersion;
+    _completeConnectionResults = true;
+    await initialize(initialization);
+    handleInitialized();
+    return discover(request);
+  }
+
+  /// Reads the 2026-07-28 `_meta` envelope off [request].
+  ///
+  /// A probe without the reserved protocol-version key is method-not-found,
+  /// so a legacy client does not take this connection for modern.
+  MCPServerInitialization _initializationFromDiscover(
+    DiscoverRequest? request,
+  ) {
+    final meta = request?.meta;
+    if (meta == null) {
+      throw RpcException(
+        error_code.METHOD_NOT_FOUND,
+        'Unknown method "${DiscoverRequest.methodName}".',
+      );
+    }
+    final raw = meta as Map<String, Object?>;
+    final versionString = raw[Keys.protocolVersionMeta];
+    if (versionString is! String) {
+      throw RpcException(
+        error_code.METHOD_NOT_FOUND,
+        'Unknown method "${DiscoverRequest.methodName}".',
+      );
+    }
+    final version = ProtocolVersion.tryParse(versionString);
+    if (version == null ||
+        !version.isSupported ||
+        !version.methodIsValid(DiscoverRequest.methodName)) {
+      throw RpcException(
+        McpErrorCodes.unsupportedProtocolVersion,
+        'Unsupported protocol version',
+        data: {
+          Keys.supported: _discoverableVersionStrings,
+          Keys.requested: versionString,
+        },
+      );
+    }
+    final capabilities = raw[Keys.clientCapabilitiesMeta];
+    if (capabilities is! Map<String, Object?>) {
+      throw RpcException.invalidParams(
+        'The envelope requires a ${Keys.clientCapabilitiesMeta} object',
+      );
+    }
+    late final ClientCapabilities clientCapabilities;
+    try {
+      clientCapabilities = ClientCapabilities.fromMap(capabilities);
+      // ignore: avoid_catching_errors
+    } on ArgumentError {
+      throw RpcException.invalidParams(
+        'The envelope ${Keys.clientCapabilitiesMeta} contains an invalid '
+        'extension identifier',
+      );
+    }
+    final clientInfo = raw[Keys.clientInfoMeta];
+    if (clientInfo is! Map<String, Object?>?) {
+      throw RpcException.invalidParams(
+        'The envelope ${Keys.clientInfoMeta} must be an object',
+      );
+    }
+    final rawLogLevel = raw[Keys.logLevelMeta];
+    LoggingLevel? logLevel;
+    if (rawLogLevel != null) {
+      if (rawLogLevel is! String) {
+        throw RpcException.invalidParams(
+          'The envelope ${Keys.logLevelMeta} must be a string',
+        );
+      }
+      for (final level in LoggingLevel.values) {
+        if (level.name == rawLogLevel) {
+          logLevel = level;
+          break;
+        }
+      }
+      if (logLevel == null) {
+        throw RpcException.invalidParams(
+          'The envelope ${Keys.logLevelMeta} was "$rawLogLevel"',
+        );
+      }
+    }
+    return MCPServerInitialization(
+      protocolVersion: version,
+      clientCapabilities: clientCapabilities,
+      clientInfo:
+          clientInfo == null ? null : Implementation.fromMap(clientInfo),
+      logLevel: logLevel,
     );
   }
 
@@ -352,6 +511,19 @@ abstract base class MCPServer extends MCPBase {
     return sendRequest(CreateMessageRequest.methodName, request);
   }
 }
+
+/// Newest revision the `initialize` handshake still negotiates.
+ProtocolVersion get _latestHandshakeVersion => ProtocolVersion.values.lastWhere(
+  (version) =>
+      version.isSupported &&
+      version.methodIsValid(InitializeRequest.methodName),
+);
+
+List<String> get _discoverableVersionStrings => [
+  for (final version in ProtocolVersion.values)
+    if (version.methodIsValid(DiscoverRequest.methodName))
+      version.versionString,
+];
 
 /// Refuses to send [method] when [ProtocolVersion.methodIsValid] says
 /// [protocolVersion] does not have it.

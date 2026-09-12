@@ -6,8 +6,8 @@ part of 'server.dart';
 
 /// A mixin for MCP servers which serve `subscriptions/listen` requests.
 ///
-/// Stamps the subscription id from the JSON-RPC request [Parameters.id] and
-/// holds the request until shutdown. A null id is refused.
+/// Stamps [Parameters.id] from the JSON-RPC request on the subscription and
+/// holds the request until shutdown. A null ID is refused.
 ///
 /// See https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
 base mixin SubscriptionsSupport on MCPServer {

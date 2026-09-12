@@ -1,5 +1,6 @@
 ## 0.6.0-wip
 
+- Point `ProtocolVersion.latestSupported` at 2026-07-28.
 - Validate the `Origin` header against `allowedOrigins` on
   `handleStreamableHttpRequest`, answering 403 when a request carries one the
   list leaves out. Leaving the argument off keeps the header unread.
@@ -263,11 +264,11 @@
   which have them.
 - Serve `subscriptions/listen` from `SubscriptionsSupport`, which
   acknowledges the filter the server can honor, stamps the subscription
-  id, and holds the request until shutdown, see
+  ID, and holds the request until shutdown, see
   https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions.
   - The handler names the subscription from `Parameters.id`, the JSON-RPC
-    id of the `subscriptions/listen` request, and answers `-32600` when that
-    id is null or already open.
+    ID of the `subscriptions/listen` request, and answers `-32600` when that
+    ID is null or already open.
   - The Streamable HTTP handler keeps that response open as SSE and routes
     matching list and resource notifications onto it. A client that closes
     the response ends the subscription without a final result. An
@@ -313,10 +314,8 @@
   `ProgressToken` uses, so `CancelledNotification.requestId` threw for every
   id a peer can send and no id could be constructed to pass to the
   `CancelledNotification` factory.
-- Add `ProtocolVersion.v2026_07_28`. `ProtocolVersion.latestSupported` still
-  points at 2025-11-25, the newest version the legacy `initialize` handshake
-  negotiates; transports for the request-scoped protocol carry their own set
-  of supported versions.
+- Add `ProtocolVersion.v2026_07_28`. Request-scoped transports carry their
+  own set of supported versions.
 - Add `DiscoverRequest` and `DiscoverResult`, modeling the `server/discover`
   request that the 2026-07-28 revision requires servers to implement, see
   https://modelcontextprotocol.io/specification/2026-07-28/server/discover.

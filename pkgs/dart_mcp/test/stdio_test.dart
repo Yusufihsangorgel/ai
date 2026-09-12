@@ -149,6 +149,229 @@ void main() {
       expect(jsonDecode(line), {Keys.jsonrpc: '2.0', Keys.id: 2});
     });
   });
+
+  group('fromStreamChannel', () {
+    test(
+      'initialize offering latestSupported keeps a handshake revision',
+      () async {
+        final harness = _EdgeHarness(drain: false);
+        final server = _CountingServer(harness.channel);
+        addTearDown(server.shutdown);
+
+        harness.wireIn.add(
+          jsonEncode({
+            Keys.jsonrpc: '2.0',
+            Keys.id: 1,
+            Keys.method: InitializeRequest.methodName,
+            Keys.params: {
+              Keys.protocolVersion:
+                  ProtocolVersion.latestSupported.versionString,
+              Keys.capabilities: <String, Object?>{},
+              Keys.clientInfo: {Keys.name: 'test client', Keys.version: '0.1'},
+            },
+          }),
+        );
+        final result =
+            (await harness.nextWireObject())[Keys.result]
+                as Map<String, Object?>;
+        final negotiated = ProtocolVersion.tryParse(
+          result[Keys.protocolVersion] as String,
+        );
+        expect(negotiated, isNot(ProtocolVersion.v2026_07_28));
+        expect(negotiated?.methodIsValid(InitializeRequest.methodName), isTrue);
+        expect(server.initializeCalls, 1);
+
+        harness.wireIn.add(
+          jsonEncode({
+            Keys.jsonrpc: '2.0',
+            Keys.id: 2,
+            Keys.method: DiscoverRequest.methodName,
+            Keys.params: {
+              Keys.meta: {
+                Keys.protocolVersionMeta:
+                    ProtocolVersion.v2026_07_28.versionString,
+                Keys.clientCapabilitiesMeta: <String, Object?>{},
+              },
+            },
+          }),
+        );
+        final error = _error(await harness.nextWireObject());
+        expect(error[Keys.code], error_code.METHOD_NOT_FOUND);
+        expect(server.protocolVersion, negotiated);
+        expect(server.initializeCalls, 1);
+      },
+    );
+
+    test('answers an enveloped server/discover before initialize', () async {
+      final harness = _EdgeHarness(drain: false);
+      final server = TestMCPServer(harness.channel);
+      addTearDown(server.shutdown);
+
+      harness.wireIn.add(
+        jsonEncode({
+          Keys.jsonrpc: '2.0',
+          Keys.id: 1,
+          Keys.method: DiscoverRequest.methodName,
+          Keys.params: {
+            Keys.meta: {
+              Keys.protocolVersionMeta:
+                  ProtocolVersion.v2026_07_28.versionString,
+              Keys.clientCapabilitiesMeta: <String, Object?>{},
+            },
+          },
+        }),
+      );
+      final response = await harness.nextWireObject();
+      expect(response[Keys.id], 1);
+      final result = response[Keys.result] as Map<String, Object?>;
+      expect(
+        result[Keys.supportedVersions],
+        contains(ProtocolVersion.v2026_07_28.versionString),
+      );
+      expect(result[Keys.resultType], ResultTypes.complete);
+      expect(result[Keys.ttlMs], 0);
+      expect(result[Keys.cacheScope], CacheScope.private.name);
+      final meta = (result[Keys.meta] as Map).cast<String, Object?>();
+      expect(meta[Keys.serverInfoMeta], {
+        Keys.name: 'test server',
+        Keys.version: '0.1.0',
+      });
+    });
+
+    test('rejects a bare server/discover before initialize', () async {
+      final harness = _EdgeHarness(drain: false);
+      final server = TestMCPServer(harness.channel);
+      addTearDown(server.shutdown);
+
+      harness.wireIn.add(
+        jsonEncode({
+          Keys.jsonrpc: '2.0',
+          Keys.id: 1,
+          Keys.method: DiscoverRequest.methodName,
+        }),
+      );
+      final error = _error(await harness.nextWireObject());
+      expect(error[Keys.code], error_code.METHOD_NOT_FOUND);
+    });
+
+    test('initializes once for concurrent discovery probes', () async {
+      final harness = _EdgeHarness(drain: false);
+      final initializeGate = Completer<void>();
+      final server = _CountingServer(
+        harness.channel,
+        initializeGate: initializeGate.future,
+      );
+      addTearDown(() async {
+        if (!initializeGate.isCompleted) initializeGate.complete();
+        await server.shutdown();
+      });
+
+      Map<String, Object?> discoverMessage(int id) => {
+        Keys.jsonrpc: '2.0',
+        Keys.id: id,
+        Keys.method: DiscoverRequest.methodName,
+        Keys.params: {
+          Keys.meta: {
+            Keys.protocolVersionMeta: ProtocolVersion.v2026_07_28.versionString,
+            Keys.clientCapabilitiesMeta: <String, Object?>{},
+          },
+        },
+      };
+
+      harness.wireIn.add(jsonEncode(discoverMessage(1)));
+      await pumpEventQueue(times: 20);
+      expect(server.initializeCalls, 1);
+      harness.wireIn.add(jsonEncode(discoverMessage(2)));
+      final rejected = await harness.nextWireObject();
+      expect(rejected[Keys.id], 2);
+      expect(_error(rejected)[Keys.code], error_code.METHOD_NOT_FOUND);
+      expect(server.initializeCalls, 1);
+
+      initializeGate.complete();
+      final discovered = await harness.nextWireObject();
+      expect(discovered[Keys.id], 1);
+      expect(discovered.containsKey(Keys.result), isTrue);
+      expect(server.initializeCalls, 1);
+    });
+
+    test('serves an acknowledgement before the 2026 listen result', () async {
+      final harness = _EdgeHarness(drain: false);
+      final server = _SubscriptionServer(harness.channel);
+      addTearDown(server.shutdown);
+
+      harness.wireIn.add(
+        jsonEncode({
+          Keys.jsonrpc: '2.0',
+          Keys.id: 1,
+          Keys.method: DiscoverRequest.methodName,
+          Keys.params: {
+            Keys.meta: {
+              Keys.protocolVersionMeta:
+                  ProtocolVersion.v2026_07_28.versionString,
+              Keys.clientCapabilitiesMeta: <String, Object?>{},
+            },
+          },
+        }),
+      );
+      final discover = await harness.nextWireObject();
+      expect(discover[Keys.id], 1);
+      expect(discover.containsKey(Keys.result), isTrue);
+
+      harness.wireIn.add(
+        jsonEncode({
+          Keys.jsonrpc: '2.0',
+          Keys.id: 2,
+          Keys.method: SubscriptionsListenRequest.methodName,
+          Keys.params: {Keys.notifications: <String, Object?>{}},
+        }),
+      );
+      final acknowledgement = await harness.nextWireObject();
+      expect(
+        acknowledgement[Keys.method],
+        SubscriptionsAcknowledgedNotification.methodName,
+      );
+      final acknowledgementMeta =
+          ((acknowledgement[Keys.params] as Map)[Keys.meta] as Map)
+              .cast<String, Object?>();
+      expect(acknowledgementMeta[Keys.subscriptionIdMeta], 2);
+
+      await server.shutdown();
+      final response = await harness.nextWireObject();
+      expect(response[Keys.id], 2);
+      final result = (response[Keys.result] as Map).cast<String, Object?>();
+      final resultMeta = (result[Keys.meta] as Map).cast<String, Object?>();
+      expect(resultMeta[Keys.subscriptionIdMeta], 2);
+      expect(resultMeta[Keys.serverInfoMeta], {
+        Keys.name: 'test server',
+        Keys.version: '0.1.0',
+      });
+      expect(result[Keys.resultType], ResultTypes.complete);
+    });
+  });
+}
+
+base class _CountingServer extends MCPServer {
+  _CountingServer(super.channel, {this.initializeGate})
+    : super.fromStreamChannel(
+        implementation: Implementation(name: 'test server', version: '0.1.0'),
+      );
+
+  final Future<void>? initializeGate;
+  int initializeCalls = 0;
+
+  @override
+  Future<void> initialize(MCPServerInitialization initialization) async {
+    initializeCalls++;
+    if (initializeGate case final gate?) await gate;
+    await super.initialize(initialization);
+  }
+}
+
+base class _SubscriptionServer extends MCPServer with SubscriptionsSupport {
+  _SubscriptionServer(super.channel)
+    : super.fromStreamChannel(
+        implementation: Implementation(name: 'test server', version: '0.1.0'),
+      );
 }
 
 /// A [jsonRpcChannel] over an in-memory pair of string controllers.

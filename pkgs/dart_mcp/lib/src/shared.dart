@@ -92,7 +92,7 @@ base class MCPBase {
   );
 
   /// Registers a handler for [name] that also receives the request
-  /// [Parameters], including the JSON-RPC id.
+  /// [Parameters], including the JSON-RPC ID.
   @protected
   void registerRequestHandlerWithParameters<
     T extends Request?,

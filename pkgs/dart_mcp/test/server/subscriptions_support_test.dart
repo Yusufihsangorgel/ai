@@ -228,11 +228,9 @@ void main() {
     environment.server.updateResource(ignored);
     environment.server.updateResource(watched);
     await pumpEventQueue();
-    expect(
-      updated,
-      [watched.uri],
-      reason: 'a resource the acknowledged filter leaves out sends nothing',
-    );
+    expect(updated, [
+      watched.uri,
+    ], reason: 'a resource the acknowledged filter leaves out sends nothing');
 
     await environment.server.shutdown();
     expect((await listening).subscriptionId, isNotNull);
@@ -296,7 +294,7 @@ void main() {
     },
   );
 
-  test('names two in-flight listens from their own JSON-RPC ids', () async {
+  test('names two in-flight listens from their own JSON-RPC IDs', () async {
     final first = listen();
     final second = listen();
     await pumpEventQueue(times: 20);

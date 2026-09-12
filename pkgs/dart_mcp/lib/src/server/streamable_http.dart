@@ -916,9 +916,8 @@ String _decodeSentinel(String value) =>
 
 /// The protocol versions this handler implements.
 ///
-/// The legacy handshake negotiates [ProtocolVersion.latestSupported] instead.
-/// The request-scoped protocol this transport speaks was introduced later, so
-/// the two sets are deliberately separate.
+/// The legacy handshake negotiates revisions that still have `initialize`.
+/// This transport speaks the request-scoped set in [_supportedVersions].
 const _supportedVersions = {ProtocolVersion.v2026_07_28};
 
 /// Whether any revision of the protocol defines [method].

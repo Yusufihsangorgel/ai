@@ -757,10 +757,6 @@ final class _RequestScopedCacheServer extends TestMCPServer {
 
 final class _CacheServer extends TestMCPServer {
   _CacheServer(super.channel) {
-    registerRequestHandler<DiscoverRequest?, DiscoverResult>(
-      DiscoverRequest.methodName,
-      _discover,
-    );
     registerRequestHandler<ListToolsRequest?, ListToolsResult>(
       ListToolsRequest.methodName,
       _listTools,
@@ -808,7 +804,8 @@ final class _CacheServer extends TestMCPServer {
     return result;
   }
 
-  DiscoverResult _discover(DiscoverRequest? _) {
+  @override
+  DiscoverResult discover([DiscoverRequest? request]) {
     _record(DiscoverRequest.methodName);
     return _complete(
       DiscoverResult(

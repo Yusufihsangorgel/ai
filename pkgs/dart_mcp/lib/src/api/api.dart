@@ -147,13 +147,11 @@ enum ProtocolVersion {
   /// The oldest version supported by the current API.
   static const oldestSupported = ProtocolVersion.v2024_11_05;
 
-  /// The most recent version supported by the current API.
+  /// The newest protocol revision this package implements.
   ///
-  /// This is the newest version the legacy `initialize` handshake negotiates.
-  /// A transport for a request-scoped protocol revision, such as
-  /// `handleStreamableHttpRequest` in `package:dart_mcp/streamable_http.dart`,
-  /// carries its own set of supported versions.
-  static const latestSupported = ProtocolVersion.v2025_11_25;
+  /// The legacy `initialize` handshake only negotiates revisions that still
+  /// have that method. A request-scoped transport keeps its own supported set.
+  static const latestSupported = ProtocolVersion.v2026_07_28;
 
   /// The version string used over the wire to identify this version.
   final String versionString;

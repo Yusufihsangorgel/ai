@@ -22,7 +22,12 @@ void main() {
 
     expect(initializeResult.capabilities, isEmpty);
     expect(initializeResult.instructions, environment.server.instructions);
-    expect(initializeResult.protocolVersion, ProtocolVersion.latestSupported);
+    expect(
+      initializeResult.protocolVersion?.methodIsValid(
+        InitializeRequest.methodName,
+      ),
+      isTrue,
+    );
 
     expect(environment.server.clientInfo, environment.client.implementation);
     expect(
