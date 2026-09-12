@@ -631,8 +631,24 @@ base class ServerConnection extends MCPBase {
   /// last is consumed.
   ///
   /// [pageRequest] builds one page's request; [itemsOf] reads its items;
-  /// [maxPages] bounds it. Pages share one progress token, closed at the end.
+  /// [maxPages] bounds it, and anything under 1 is an [ArgumentError].
   Stream<T> _listAllPages<T, R extends PaginatedResult>(
+    String methodName,
+    Request Function(Cursor? cursor) pageRequest,
+    List<T> Function(R page) itemsOf,
+    Cursor? cursor,
+    int? maxPages,
+  ) {
+    if (maxPages != null && maxPages < 1) {
+      throw ArgumentError.value(maxPages, 'maxPages', 'Must be at least 1');
+    }
+    return _walkPages(methodName, pageRequest, itemsOf, cursor, maxPages);
+  }
+
+  /// The [_listAllPages] walk itself, entered once [maxPages] is known good.
+  ///
+  /// Every page goes out under one progress token, closed when the walk ends.
+  Stream<T> _walkPages<T, R extends PaginatedResult>(
     String methodName,
     Request Function(Cursor? cursor) pageRequest,
     List<T> Function(R page) itemsOf,
@@ -653,7 +669,7 @@ base class ServerConnection extends MCPBase {
         if (maxPages != null && pagesRequested >= maxPages) {
           // A cursor's value says nothing about where the listing ends, so a
           // server that keeps handing out cursors is stopped by this count.
-          throw StateError('$methodName did not stop after $maxPages pages.');
+          throw StateError('$methodName still had pages after $maxPages.');
         }
         request = pageRequest(next);
       }

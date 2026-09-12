@@ -208,6 +208,16 @@ void main() {
     ]);
   });
 
+  test('a maxPages under one is rejected before any request', () {
+    server.pages = [
+      ['a'],
+    ];
+
+    expect(() => connection.listAllTools(null, 0), throwsArgumentError);
+    expect(() => connection.listAllTools(null, -5), throwsArgumentError);
+    expect(server.cursors, isEmpty);
+  });
+
   test('every page carries the progress token and it closes once', () async {
     server.pages = [
       ['a'],
