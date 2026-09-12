@@ -20,17 +20,16 @@ base mixin AnalyticsEvents
   Future<void> initialize(MCPServerInitialization initialization) async {
     // This comes first, so the event carries the client implementation.
     await super.initialize(initialization);
-    analytics?.send(
-      _createDartMCPEvent(
-        type: AnalyticsEvent.initialize.name,
-        additionalData: InitializeMetrics(
-          supportsElicitation:
-              initialization.clientCapabilities.elicitation != null,
-          supportsRoots: initialization.clientCapabilities.roots != null,
-          supportsSampling: initialization.clientCapabilities.sampling != null,
-        ),
+    final event = _createDartMCPEvent(
+      type: AnalyticsEvent.initialize.name,
+      additionalData: InitializeMetrics(
+        supportsElicitation:
+            initialization.clientCapabilities.elicitation != null,
+        supportsRoots: initialization.clientCapabilities.roots != null,
+        supportsSampling: initialization.clientCapabilities.sampling != null,
       ),
     );
+    if (event != null) analytics?.send(event);
   }
 
   @override
@@ -164,19 +163,31 @@ base mixin AnalyticsEvents
     }, validateArguments: false);
   }
 
-  Event _createDartMCPEvent({
+  /// The analytics event for [type], or `null` when the client declared no
+  /// implementation.
+  ///
+  /// `client` and `clientVersion` are required fields of
+  /// [Event.dartMCPEvent], so an event for a client that named itself nothing
+  /// would have to invent both. It is dropped instead.
+  Event? _createDartMCPEvent({
     required String type,
     CustomMetrics? additionalData,
-  }) => Event.dartMCPEvent(
-    client: clientInfo?.name ?? unknownClient,
-    clientVersion: clientInfo?.version ?? unknownClient,
-    serverVersion: implementation.version,
-    type: type,
-    agentPlugin: agentPlugin,
-    additionalData: additionalData,
-  );
+  }) {
+    final info = clientInfo;
+    if (info == null) return null;
+    return Event.dartMCPEvent(
+      client: info.name,
+      clientVersion: info.version,
+      serverVersion: implementation.version,
+      type: type,
+      agentPlugin: agentPlugin,
+      additionalData: additionalData,
+    );
+  }
 
-  void trySendAnalyticsEvent(Event event) {
+  /// Sends [event], if there is one, and logs rather than throws on failure.
+  void trySendAnalyticsEvent(Event? event) {
+    if (event == null) return;
     try {
       analytics?.send(event);
     } catch (e) {
